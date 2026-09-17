@@ -1,0 +1,10 @@
+*.log
+*.lock/
+.DS_Store
+__pycache__/
+.env
+.env.*
+*.pem
+*.key
+id_rsa
+id_ed25519
