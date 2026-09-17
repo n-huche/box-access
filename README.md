@@ -1,6 +1,6 @@
 # box-infra
 
-Acesso SSH à Computer do Grok Bot via Tailscale, e o cold start dos processos que reboot ou Update da Computer não relançam.
+Acesso SSH à box via Tailscale, e o cold start dos processos que reboot ou Update da box não relançam.
 
 Não é o AOS. AOS vive em `/workspace/aos`. Este repo só: **Tailscale**, **sshd :2222**, **`start.sh`**.
 
@@ -16,7 +16,7 @@ infra/sshd-watchdog.sh
 infra/tailscale-watchdog.sh
 ```
 
-Na VM, depois do bootstrap:
+Na box, depois do bootstrap:
 
 ```text
 /home/box/start.sh
@@ -36,9 +36,9 @@ Sem o state do Tailscale o bootstrap **para**. Não roda `tailscale up` sozinho.
 
 ## Recuperar
 
-Há systemd nesta VM: **não**. `@reboot` do cron: best-effort (neste container muitas vezes não dispara). Alguém tem de correr o bootstrap/`start.sh`.
+Há systemd nesta box: **não**. `@reboot` do cron: best-effort (muitas vezes não dispara). Alguém tem de correr o bootstrap/`start.sh`.
 
-### Update da Computer
+### Update da box
 
 Arquivos em `/workspace` tendem a ficar. Pacotes apt somem. Cron e spool podem sumir.
 
@@ -87,7 +87,7 @@ Da sua máquina (Tailscale no mesmo tailnet):
 ssh -p 2222 box@<tailscale-ipv4>
 ```
 
-IP atual: `sudo tailscale ip -4` nesta VM.
+IP atual: `sudo tailscale ip -4` nesta box.
 
 ## Regras
 

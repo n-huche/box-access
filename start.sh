@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cold start: sobe processos que reboot/Update da VM não reiniciaram.
+# Cold start: sobe processos que reboot/Update da box não reiniciaram.
 # Watchdogs em loop. Não toca na plataforma Grok Bot/Cursor.
 set -euo pipefail
 
