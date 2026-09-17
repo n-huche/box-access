@@ -12,18 +12,18 @@ No git:
 bootstrap.sh          # pacotes + instala em /home/box + start
 start.sh              # cold start (cópia em /home/box/start.sh)
 packages.txt          # openssh-server, tailscale
-infra/sshd-watchdog.sh
-infra/tailscale-watchdog.sh
+sshd-watchdog.sh
+tailscale-watchdog.sh
 ```
 
 Na box, depois do bootstrap:
 
 ```text
 /home/box/start.sh
-/home/box/infra/          # scripts, logs, locks
+/home/box/infra/          # watchdogs, logs, locks
 ```
 
-`/home/box/start.sh` fica na raiz de propósito: é o que se corre à mão. Os watchdogs ficam em `infra/`.
+`/home/box/start.sh` fica na raiz de propósito: é o que se corre à mão. Watchdogs instalam em `/home/box/infra/` (logs e locks junto).
 
 ## O que o git não guarda
 

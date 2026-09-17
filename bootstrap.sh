@@ -40,8 +40,8 @@ fi
 
 mkdir -p "$INFRA_DST"
 install -m 755 "$REPO/start.sh" "${HOME_BOX}/start.sh"
-install -m 755 "$REPO/infra/sshd-watchdog.sh" "${INFRA_DST}/sshd-watchdog.sh"
-install -m 755 "$REPO/infra/tailscale-watchdog.sh" "${INFRA_DST}/tailscale-watchdog.sh"
+install -m 755 "$REPO/sshd-watchdog.sh" "${INFRA_DST}/sshd-watchdog.sh"
+install -m 755 "$REPO/tailscale-watchdog.sh" "${INFRA_DST}/tailscale-watchdog.sh"
 echo "installed: ${HOME_BOX}/start.sh + ${INFRA_DST}/*.sh"
 
 if [[ "$INSTALL_ONLY" -eq 1 ]]; then
