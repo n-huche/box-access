@@ -8,3 +8,6 @@ __pycache__/
 *.key
 id_rsa
 id_ed25519
+ssh_host_*
+sshd.pid
+sshd_config.runtime
