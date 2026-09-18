@@ -1,0 +1,13 @@
+# box-infra: sshd próprio. Não incluir /etc/ssh/sshd_config (lá vem Port 22).
+# ListenAddress entra na linha de comando (IP Tailscale é dinâmico).
+AddressFamily inet
+Port 2222
+PubkeyAuthentication yes
+AuthorizedKeysFile .ssh/authorized_keys
+PasswordAuthentication yes
+KbdInteractiveAuthentication no
+UsePAM yes
+X11Forwarding no
+PrintMotd no
+AcceptEnv LANG LC_*
+Subsystem sftp /usr/lib/openssh/sftp-server
