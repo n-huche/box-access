@@ -23,8 +23,6 @@ git pull
 ./bootstrap.sh
 ```
 
-`--install-only` faz o mesmo e sai (útil quando outro script já vai arrancar daemons).
-
 ## O que o git não guarda
 
 - `/var/lib/tailscale/` (identidade do nó)
