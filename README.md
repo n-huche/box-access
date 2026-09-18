@@ -1,21 +1,21 @@
 # box-access
 
-Portão desta box: Tailscale + OpenSSH. Atemporal. Não sobe processos.
+Gate for this box: Tailscale + OpenSSH. Timeless. Does not start processes.
 
-## O que é
+## What it is
 
-- Pacotes `openssh-server` e `tailscale`
-- Recusa criar identidade Tailscale nova (precisa de `/var/lib/tailscale/tailscaled.state`)
-- Destino do SSH: IPv4 Tailscale, porta **2222** — nunca `0.0.0.0`
+- Packages `openssh-server` and `tailscale`
+- Refuses to create a new Tailscale identity (needs `/var/lib/tailscale/tailscaled.state`)
+- SSH target: Tailscale IPv4, port **2222** — never `0.0.0.0`
 
 ## Layout
 
 ```text
-bootstrap.sh          # pacotes + verifica o state
+bootstrap.sh          # packages + checks the state
 packages.txt
 ```
 
-## Uso
+## Use
 
 ```bash
 cd /workspace/box-access
@@ -23,17 +23,17 @@ git pull
 ./bootstrap.sh
 ```
 
-## O que o git não guarda
+## What git does not store
 
-- `/var/lib/tailscale/` (identidade do nó)
+- `/var/lib/tailscale/` (node identity)
 - `~/.ssh/`
 - `~/.config/gh/`
 
-Sem o state do Tailscale o bootstrap **para**. Não corre `tailscale up` sozinho.
+Without the Tailscale state, bootstrap **stops**. It does not run `tailscale up` on its own.
 
-## Regras
+## Rules
 
-- Não toca na plataforma Grok Bot/Cursor (`sand-*`, `.cursor`, `chrome-profile`).
-- Não consome pool de workers.
-- Não arranca daemons.
-- Não é inventário de serviços.
+- Do not touch the Grok Bot/Cursor platform (`sand-*`, `.cursor`, `chrome-profile`).
+- Do not consume the worker pool.
+- Do not start daemons.
+- Not a service inventory.
