@@ -1,2 +1,4 @@
+ca-certificates
+curl
 openssh-server
 tailscale

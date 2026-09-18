@@ -15,5 +15,5 @@ pgrep -af 'tailscale-watchdog|sshd-watchdog' || true
 # AOS é outro sistema. Se estiver neste disco, só o cold-starta.
 AOS=/workspace/aos/scripts/aos
 if [[ -x "$AOS" ]]; then
-  "$AOS" up
+  "$AOS" up || echo "WARN: aos up falhou" >&2
 fi

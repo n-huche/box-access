@@ -2,9 +2,10 @@
 # ListenAddress entra na linha de comando (IP Tailscale é dinâmico).
 AddressFamily inet
 Port 2222
+HostKey /etc/ssh/ssh_host_ed25519_key
 PubkeyAuthentication yes
 AuthorizedKeysFile .ssh/authorized_keys
-PasswordAuthentication yes
+PasswordAuthentication no
 KbdInteractiveAuthentication no
 UsePAM yes
 X11Forwarding no

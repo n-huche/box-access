@@ -2,20 +2,61 @@
 
 Acesso SSH à box via Tailscale, e o cold start dos processos que reboot ou Update da box não relançam.
 
-Não é o AOS. AOS vive em `/workspace/aos`. Este repo só: **Tailscale**, **sshd :2222**, **`start.sh`**.
+Não é o AOS. AOS vive em `/workspace/aos`. Este repo: **Tailscale**, **sshd :2222**, **`start.sh`**.
+
+## Reset completo (o caminho normal)
+
+Disco vazio. Dois clones e um script:
+
+```bash
+cd /workspace
+git clone https://github.com/n-huche/box-infra.git
+git clone <url-do-aos> aos
+./box-infra/bootstrap.sh
+```
+
+Isto cria o user `box`, instala pacotes, junta o Tailscale como hostname `box`, sobe sshd só em `<ip>:2222`, e se o AOS estiver em `/workspace/aos` corre `aos up`.
+
+```text
+ssh -p 2222 box@<tailscale-ipv4>
+```
+
+IP: `sudo tailscale ip -4` nesta box. No cliente Tailscale o nome é `box`.
+
+### Uma vez (obrigatório, senão o clone não chega)
+
+O git não inventa identidade Tailscale nem a chave da tua máquina.
+
+1. `authorized_keys` — as tuas pubkeys. Commit normal.
+2. `secrets/ts-authkey` — auth key **reutilizável** (não efémera). O ficheiro está no gitignore:
+
+```bash
+cp secrets/ts-authkey.example secrets/ts-authkey
+# cola a key
+chmod 600 secrets/ts-authkey
+git add -f secrets/ts-authkey authorized_keys
+git commit && git push
+```
+
+Host key ed25519 já vai no repo (`secrets/ssh_host_ed25519_key`): o fingerprint SSH não muda a cada reset.
+
+Sem a auth key no clone, o bootstrap **para**. Não faz `tailscale up` às cegas.
 
 ## Layout
 
 No git:
 
 ```text
-bootstrap.sh          # pacotes + instala em /home/box + start
-start.sh              # cold start (cópia em /home/box/start.sh)
-status.sh             # a box está acessível?
-packages.txt          # openssh-server, tailscale
-sshd_config           # Port 2222; sem /etc/ssh/sshd_config
+bootstrap.sh
+start.sh
+status.sh
+authorized_keys
+packages.txt
+sshd_config
 sshd-watchdog.sh
 tailscale-watchdog.sh
+secrets/ssh_host_ed25519_key
+secrets/ts-authkey          # tracked à mão (git add -f)
 ```
 
 Na box, depois do bootstrap:
@@ -23,28 +64,11 @@ Na box, depois do bootstrap:
 ```text
 /home/box/start.sh
 /home/box/status.sh
-/home/box/infra/          # watchdogs, sshd_config, logs, locks, backup das host keys
+/home/box/.ssh/authorized_keys
+/home/box/infra/
 ```
 
-`/home/box/start.sh` fica na raiz de propósito: é o que se corre à mão. Watchdogs instalam em `/home/box/infra/` (logs e locks junto).
-
-## O que o git não guarda
-
-- `/var/lib/tailscale/` (identidade do nó)
-- `/home/box/infra/ssh_host_*` (backup das host keys; o sshd lê `/etc/ssh/`)
-- `~/.ssh/`
-- `~/.config/gh/`
-- logs e locks
-
-Sem o state do Tailscale o bootstrap **para**. Não roda `tailscale up` sozinho.
-
-## Recuperar
-
-Há systemd nesta box: **não**. `@reboot` do cron: best-effort (muitas vezes não dispara). Alguém tem de correr o bootstrap/`start.sh`.
-
-### Update da box
-
-Arquivos em `/workspace` tendem a ficar. Pacotes apt somem. Cron e spool podem sumir.
+## Update (ficheiros ainda no disco)
 
 ```bash
 cd /workspace/box-infra
@@ -52,52 +76,19 @@ git pull
 ./bootstrap.sh
 ```
 
-Isso reinstala `openssh-server` e `tailscale` se faltarem, regrava `start.sh` + watchdogs + `sshd_config`, restaura host keys para `/etc/ssh` se o backup existir, para o sshd da distro em `:22`, sobe os daemons se o state ainda estiver em disco.
+`--install-only` copia arquivos e não sobe processos.
 
-`/home/box/status.sh` — `acesso: ok` quer dizer Tailscale + sshd em `<ip>:2222`.
-
-Se `/workspace/box-infra` tiver sumido:
-
-```bash
-cd /workspace
-git clone https://github.com/n-huche/box-infra.git
-cd box-infra
-./bootstrap.sh
-```
-
-### Reset (snapshot)
-
-Pode voltar um disco velho ou perder trabalho não sincronizado. Se o clone não estiver no snapshot:
-
-1. Clonar o repo (acima).
-2. Confirmar `sudo test -f /var/lib/tailscale/tailscaled.state`.
-3. `./bootstrap.sh`.
-
-State ausente: autenticar o Tailscale **na mão** neste nó (não deixar o script criar identidade). Só então bootstrap de novo.
-
-### Só copiar arquivos, sem mexer em processos
-
-```bash
-./bootstrap.sh --install-only
-```
+Há systemd nesta box: **não**. Alguém (tu, ou o agent) corre o bootstrap depois do clone. `@reboot` não é a história.
 
 ## `start.sh`
 
-1. Sobe `tailscale-watchdog` (adota `tailscaled` se já estiver no ar).
-2. Sobe `sshd-watchdog` (sshd só no IPv4 Tailscale, porta **2222**; para `:22` da distro no start).
-3. Se existir `/workspace/aos/scripts/aos`, chama `aos up` — cold start do AOS, que é outro sistema.
-
-Da sua máquina (Tailscale no mesmo tailnet):
-
-```text
-ssh -p 2222 box@<tailscale-ipv4>
-```
-
-IP atual: `sudo tailscale ip -4` nesta box.
+1. `tailscale-watchdog` (adota `tailscaled` se já estiver no ar).
+2. `sshd-watchdog` (sshd no IPv4 Tailscale :2222; para `:22` da distro no start).
+3. Se existir `/workspace/aos/scripts/aos`, `aos up`.
 
 ## Regras
 
 - Não toca na plataforma Grok Bot/Cursor (`sand-*`, `.cursor`, `chrome-profile`).
 - Não consome pool de workers.
-- Watchdog do Tailscale recusa subir sem `tailscaled.state`.
+- Watchdog do Tailscale não cria nó novo. Quem junta na primeira vez é o bootstrap, e só com auth key.
 - sshd não escuta 0.0.0.0; só o IP Tailscale.

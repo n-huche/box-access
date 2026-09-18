@@ -1,0 +1,3 @@
+# Chaves públicas de quem entra: ssh -p 2222 box@<tailscale-ipv4>
+# Uma por linha (ssh-ed25519 / ssh-rsa). Comentários começam com #.
+# Sem pelo menos uma chave, depois de um reset o sshd sobe e tu não entras.
