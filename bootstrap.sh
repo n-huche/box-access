@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Portão: pacotes + identidade Tailscale já existente.
-# Não arranca daemons.
+# Gate: packages + an existing Tailscale identity.
+# Does not start daemons.
 
 set -euo pipefail
 
@@ -26,8 +26,8 @@ while read -r pkg; do
 done < "$REPO/packages.txt"
 
 if ! sudo test -f "$STATE"; then
-  echo "ERROR: missing $STATE — não vou criar identidade Tailscale nova." >&2
-  echo "Recupere o estado do nó ou autentique na mão. Depois rode de novo." >&2
+  echo "ERROR: missing $STATE — will not create a new Tailscale identity." >&2
+  echo "Restore the node state or authenticate by hand. Then run again." >&2
   exit 1
 fi
 
