@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 # Portão: pacotes + identidade Tailscale já existente.
-# Não arranca daemons. Não chama o AOS. Processos = box-keep.
+# Não arranca daemons.
 
 set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")" && pwd)
 HOME_BOX="${HOME_BOX:-/home/box}"
 STATE=/var/lib/tailscale/tailscaled.state
-KEEP="${WORKSPACE:-/workspace}/box-keep"
 
 ensure_pkg() {
   local pkg=$1
@@ -37,11 +36,5 @@ fi
 echo "gate-ok: tailscale state present"
 
 if [[ "${1:-}" == "--install-only" ]]; then
-  echo "install-only: skip keep hint"
-  exit 0
-fi
-
-echo "next: start processes with ${KEEP}/bootstrap.sh"
-if [[ ! -x "${KEEP}/bootstrap.sh" ]]; then
-  echo "WARN: box-keep not found at ${KEEP}" >&2
+  echo "install-only"
 fi
