@@ -1,97 +1,52 @@
-# box-infra
+# box-access
 
-Acesso SSH à box via Tailscale, e o cold start dos processos que reboot ou Update da box não relançam.
+Portão desta box: Tailscale + OpenSSH. **Atemporal.** Não sobe processos e não conhece o AOS.
 
-Não é o AOS. AOS vive em `/workspace/aos`. Este repo só: **Tailscale**, **sshd :2222**, **`start.sh`**.
+Quem mantém daemons no ar depois de reboot/Update é [box-keep](https://github.com/n-huche/box-keep).
+
+## O que é
+
+- Pacotes `openssh-server` e `tailscale`
+- Recusa criar identidade Tailscale nova (precisa de `/var/lib/tailscale/tailscaled.state`)
+- sshd, quando o keep o arrancar, escuta só no IPv4 Tailscale **:2222**
 
 ## Layout
 
-No git:
-
 ```text
-bootstrap.sh          # pacotes + instala em /home/box + start
-start.sh              # cold start (cópia em /home/box/start.sh)
-packages.txt          # openssh-server, tailscale
-sshd-watchdog.sh
-tailscale-watchdog.sh
+bootstrap.sh          # pacotes + verifica o state
+packages.txt
 ```
 
-Na box, depois do bootstrap:
+Não instala `/home/box/start.sh`. Isso é o keep.
 
-```text
-/home/box/start.sh
-/home/box/infra/          # watchdogs, logs, locks
+## Uso
+
+```bash
+cd /workspace/box-access
+git pull
+./bootstrap.sh --install-only
 ```
 
-`/home/box/start.sh` fica na raiz de propósito: é o que se corre à mão. Watchdogs instalam em `/home/box/infra/` (logs e locks junto).
+Depois, processos:
+
+```bash
+cd /workspace/box-keep
+./bootstrap.sh
+```
+
+Sem `--install-only`, o `bootstrap.sh` deste repo faz o mesmo (portão só) e diz para correres o keep.
 
 ## O que o git não guarda
 
 - `/var/lib/tailscale/` (identidade do nó)
 - `~/.ssh/`
 - `~/.config/gh/`
-- logs e locks
 
-Sem o state do Tailscale o bootstrap **para**. Não roda `tailscale up` sozinho.
-
-## Recuperar
-
-Há systemd nesta box: **não**. `@reboot` do cron: best-effort (muitas vezes não dispara). Alguém tem de correr o bootstrap/`start.sh`.
-
-### Update da box
-
-Arquivos em `/workspace` tendem a ficar. Pacotes apt somem. Cron e spool podem sumir.
-
-```bash
-cd /workspace/box-infra
-git pull
-./bootstrap.sh
-```
-
-Isso reinstala `openssh-server` e `tailscale` se faltarem, regrava `start.sh` + watchdogs, sobe os daemons se o state ainda estiver em disco.
-
-Se `/workspace/box-infra` tiver sumido:
-
-```bash
-cd /workspace
-git clone https://github.com/n-huche/box-infra.git
-cd box-infra
-./bootstrap.sh
-```
-
-### Reset (snapshot)
-
-Pode voltar um disco velho ou perder trabalho não sincronizado. Se o clone não estiver no snapshot:
-
-1. Clonar o repo (acima).
-2. Confirmar `sudo test -f /var/lib/tailscale/tailscaled.state`.
-3. `./bootstrap.sh`.
-
-State ausente: autenticar o Tailscale **na mão** neste nó (não deixar o script criar identidade). Só então bootstrap de novo.
-
-### Só copiar arquivos, sem mexer em processos
-
-```bash
-./bootstrap.sh --install-only
-```
-
-## `start.sh`
-
-1. Sobe `tailscale-watchdog` (adota `tailscaled` se já estiver no ar).
-2. Sobe `sshd-watchdog` (sshd só no IPv4 Tailscale, porta **2222**).
-3. Se existir `/workspace/aos/scripts/aos`, chama `aos up` — cold start do AOS, que é outro sistema.
-
-Da sua máquina (Tailscale no mesmo tailnet):
-
-```text
-ssh -p 2222 box@<tailscale-ipv4>
-```
-
-IP atual: `sudo tailscale ip -4` nesta box.
+Sem o state do Tailscale o bootstrap **para**. Não corre `tailscale up` sozinho.
 
 ## Regras
 
 - Não toca na plataforma Grok Bot/Cursor (`sand-*`, `.cursor`, `chrome-profile`).
 - Não consome pool de workers.
-- Watchdog do Tailscale recusa subir sem `tailscaled.state`.
-- sshd não escuta 0.0.0.0; só o IP Tailscale.
+- Não chama o AOS.
+- Não é inventário de serviços — serviços novos vão para o keep.

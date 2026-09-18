@@ -1,17 +1,13 @@
 #!/usr/bin/env bash
-# Instala pacotes + scripts em /home/box e (por padrão) roda start.sh.
-# Fonte da verdade: este repo. Identidade Tailscale/SSH/gh não entra aqui.
+# Portão: pacotes + identidade Tailscale já existente.
+# Não arranca daemons. Não chama o AOS. Processos = box-keep.
+
 set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")" && pwd)
 HOME_BOX="${HOME_BOX:-/home/box}"
-INFRA_DST="${HOME_BOX}/infra"
 STATE=/var/lib/tailscale/tailscaled.state
-INSTALL_ONLY=0
-
-if [[ "${1:-}" == "--install-only" ]]; then
-  INSTALL_ONLY=1
-fi
+KEEP="${WORKSPACE:-/workspace}/box-keep"
 
 ensure_pkg() {
   local pkg=$1
@@ -38,15 +34,14 @@ if ! sudo test -f "$STATE"; then
   exit 1
 fi
 
-mkdir -p "$INFRA_DST"
-install -m 755 "$REPO/start.sh" "${HOME_BOX}/start.sh"
-install -m 755 "$REPO/sshd-watchdog.sh" "${INFRA_DST}/sshd-watchdog.sh"
-install -m 755 "$REPO/tailscale-watchdog.sh" "${INFRA_DST}/tailscale-watchdog.sh"
-echo "installed: ${HOME_BOX}/start.sh + ${INFRA_DST}/*.sh"
+echo "gate-ok: tailscale state present"
 
-if [[ "$INSTALL_ONLY" -eq 1 ]]; then
-  echo "install-only: skip start"
+if [[ "${1:-}" == "--install-only" ]]; then
+  echo "install-only: skip keep hint"
   exit 0
 fi
 
-exec "${HOME_BOX}/start.sh"
+echo "next: start processes with ${KEEP}/bootstrap.sh"
+if [[ ! -x "${KEEP}/bootstrap.sh" ]]; then
+  echo "WARN: box-keep not found at ${KEEP}" >&2
+fi
