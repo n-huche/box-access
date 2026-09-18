@@ -5,7 +5,6 @@
 set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")" && pwd)
-HOME_BOX="${HOME_BOX:-/home/box}"
 STATE=/var/lib/tailscale/tailscaled.state
 
 ensure_pkg() {
@@ -20,7 +19,6 @@ ensure_pkg() {
 }
 
 echo "repo=$REPO"
-echo "home=$HOME_BOX"
 
 while read -r pkg; do
   [[ -z "$pkg" || "$pkg" =~ ^# ]] && continue
