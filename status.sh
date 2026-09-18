@@ -16,7 +16,7 @@ ts_ok=0
 ip=""
 
 listen_lines() {
-  ss -H -lntp 2>/dev/null || ss -lntp 2>/dev/null || sudo ss -lntp 2>/dev/null || true
+  ss -H -lntp 2>/dev/null || ss -lntp 2>/dev/null || sudo -n ss -lntp 2>/dev/null || true
 }
 
 pid_alive() {
@@ -30,25 +30,31 @@ cmdline_of() {
   tr '\0' ' ' <"/proc/${pid}/cmdline"
 }
 
+cmdline_has_argv() {
+  local pid=$1 want=$2
+  [[ -r "/proc/${pid}/cmdline" ]] || return 1
+  tr '\0' '\n' <"/proc/${pid}/cmdline" | grep -Fxq "$want"
+}
+
 watchdog_pid() {
   local name=$1
+  local want="${INFRA}/${name}.sh"
   local file="$INFRA/${name}.lock/pid"
-  local pid cmd
+  local pid
   if [[ -r "$file" ]]; then
     pid=$(tr -d '[:space:]' <"$file")
-    if pid_alive "$pid"; then
-      cmd=$(cmdline_of "$pid" || true)
-      if [[ "$cmd" == *"${name}.sh"* ]]; then
-        printf '%s\n' "$pid"
-        return 0
-      fi
+    if pid_alive "$pid" && cmdline_has_argv "$pid" "$want"; then
+      printf '%s\n' "$pid"
+      return 0
     fi
   fi
-  pid=$(pgrep -f "${INFRA}/${name}.sh|/${name}.sh" 2>/dev/null | head -n1 || true)
-  if pid_alive "${pid:-}"; then
+  while read -r pid; do
+    [[ -n "$pid" ]] || continue
+    pid_alive "$pid" || continue
+    cmdline_has_argv "$pid" "$want" || continue
     printf '%s\n' "$pid"
     return 0
-  fi
+  done < <(pgrep -f "$want" 2>/dev/null || true)
   return 1
 }
 
@@ -62,7 +68,7 @@ else
   printf 'tailscaled: down\n'
 fi
 
-ip=$(sudo tailscale ip -4 2>/dev/null | head -n1 | tr -d '[:space:]' || true)
+ip=$(sudo -n tailscale ip -4 2>/dev/null | head -n1 | tr -d '[:space:]' || true)
 if [[ -z "$ip" ]]; then
   ip=$(ip -4 -o addr show tailscale0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1 || true)
 fi
@@ -131,8 +137,11 @@ else
 fi
 
 # --- host key ---
-if sudo test -f "$HOST_KEY" 2>/dev/null; then
-  fp=$(sudo ssh-keygen -l -f "$HOST_KEY" 2>/dev/null | awk '{print $2}' || true)
+if [[ -r "${HOST_KEY}.pub" ]]; then
+  fp=$(ssh-keygen -l -f "${HOST_KEY}.pub" 2>/dev/null | awk '{print $2}' || true)
+  printf 'host-key: %s %s\n' "${fp:-unknown}" "$HOST_KEY"
+elif sudo -n test -f "$HOST_KEY" 2>/dev/null; then
+  fp=$(sudo -n ssh-keygen -l -f "$HOST_KEY" 2>/dev/null | awk '{print $2}' || true)
   printf 'host-key: %s %s\n' "${fp:-unknown}" "$HOST_KEY"
 else
   printf 'host-key: missing %s\n' "$HOST_KEY"

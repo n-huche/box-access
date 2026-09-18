@@ -82,14 +82,25 @@ listen_lines() {
   ss -H -lntp 2>/dev/null || ss -lntp 2>/dev/null || sudo ss -lntp 2>/dev/null || true
 }
 
+listen_addr_port() {
+  local local_part addr port
+  local_part=$(printf '%s\n' "$1" | awk '{print $4}')
+  port=${local_part##*:}
+  addr=${local_part%:*}
+  addr=${addr#\[}
+  addr=${addr%\]}
+  printf '%s %s\n' "$addr" "$port"
+}
+
 our_sshd_listening() {
   local ip=$1
-  local line pid
+  local line pid addr port
   while IFS= read -r line; do
     [[ "$line" == *sshd* ]] || continue
     pid=$(printf '%s\n' "$line" | grep -oE 'pid=[0-9]+' | head -n1 | cut -d= -f2)
     [[ -n "${pid:-}" ]] || continue
-    printf '%s\n' "$line" | grep -qE "[^0-9]${ip}:${PORT}[[:space:]]" || continue
+    read -r addr port <<<"$(listen_addr_port "$line")"
+    [[ "$addr" == "$ip" && "$port" == "$PORT" ]] || continue
     if is_our_sshd_pid "$pid"; then
       return 0
     fi
@@ -111,16 +122,12 @@ kill_pid() {
 # e o sshd antigo (cmdline sem sshd_config.runtime) — um corte na 2222.
 stop_unwanted_sshd() {
   local keep_ip=${1:-}
-  local line local_part addr port pid
+  local line addr port pid
   while IFS= read -r line; do
     [[ "$line" == *sshd* ]] || continue
     pid=$(printf '%s\n' "$line" | grep -oE 'pid=[0-9]+' | head -n1 | cut -d= -f2)
     [[ -n "${pid:-}" ]] || continue
-    local_part=$(printf '%s\n' "$line" | awk '{print $4}')
-    port=${local_part##*:}
-    addr=${local_part%:*}
-    addr=${addr#\[}
-    addr=${addr%\]}
+    read -r addr port <<<"$(listen_addr_port "$line")"
     if [[ -n "$keep_ip" && "$addr" == "$keep_ip" && "$port" == "$PORT" ]] && is_our_sshd_pid "$pid"; then
       continue
     fi
