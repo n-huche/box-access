@@ -1,6 +1,6 @@
 # box-access
 
-Gate for this box: Tailscale + OpenSSH. Timeless. Does not start processes.
+Gate for this box: Tailscale + OpenSSH. Timeless. Does not start sshd.
 
 This repo **owns Tailscale identity for reaching the VM**. Other repos (`box-upkeep`, `aos`) never configure Tailscale login or node recovery.
 
@@ -8,7 +8,7 @@ This repo **owns Tailscale identity for reaching the VM**. Other repos (`box-upk
 
 - Packages `openssh-server` and `tailscale`
 - Normal path: requires `/var/lib/tailscale/tailscaled.state` (existing identity)
-- Recovery path: if state is missing, purge the stale Tailscale device for this hostname via API, then `tailscale up` once
+- Recovery path: if state is missing, start `tailscaled` (no systemd on this host), purge the stale Tailscale device for this hostname via API, then `tailscale up` once
 - SSH target: Tailscale IPv4, port **2222** — never `0.0.0.0`
 
 ## Layout
@@ -62,8 +62,9 @@ When `/var/lib/tailscale/tailscaled.state` is **missing**:
 1. Load `secrets.env` (and optional `$REPO/.env`)
 2. If `TS_API_KEY` / `TS_AUTHKEY` are missing: prompt on a TTY (hidden), create `~/.config/box-access/secrets.env` (0600), or exit clearly when not a TTY
 3. `TS_HOSTNAME` defaults to `cursor` (prompted with that default when creating the file)
-4. List tailnet devices; **DELETE** each device whose hostname equals `TS_HOSTNAME` (case-sensitive; noop if none)
-5. `sudo tailscale up --authkey="$TS_AUTHKEY" --hostname="$TS_HOSTNAME"`
+4. Start `tailscaled` if it is not running (same flags as `box-upkeep`; this host has no systemd). Wait for the socket.
+5. List tailnet devices; **DELETE** each device whose hostname equals `TS_HOSTNAME` (case-sensitive; noop if none)
+6. `sudo tailscale up --authkey="$TS_AUTHKEY" --hostname="$TS_HOSTNAME"`
 
 When the state file **exists**: print `gate-ok` and do not purge.
 
@@ -81,7 +82,7 @@ After a VM reset you clone and bootstrap **each** repo yourself; this one only r
 
 - Do not touch the Grok Bot/Cursor platform (`sand-*`, `.cursor`, `chrome-profile`).
 - Do not consume the worker pool.
-- Do not start daemons.
+- Do not start sshd or babysit processes. Recovery starts `tailscaled` only: this host has no systemd, and `box-upkeep` will not start the daemon without state.
 - Do not clone or bootstrap other repos.
 - Not a service inventory.
 - Never commit API keys or auth keys.
