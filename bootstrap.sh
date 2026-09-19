@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # Gate: packages + an existing Tailscale identity.
-# If state is missing: ensure secrets (prompt on TTY if needed), purge stale
-# hostname via API, then authenticate once.
-# Does not start daemons (sshd stays separate).
+# If state is missing: ensure secrets (prompt on TTY if needed), start
+# tailscaled (this host has no systemd), purge stale hostname via API,
+# then authenticate once.
+# Does not start sshd (upkeep does).
 
 set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")" && pwd)
 STATE=/var/lib/tailscale/tailscaled.state
+STATEDIR=/var/lib/tailscale
+SOCKET=/run/tailscale/tailscaled.sock
+TAILSCALED=/usr/sbin/tailscaled
 SECRETS_DIR=/home/box/.config/box-access
 SECRETS_FILE="$SECRETS_DIR/secrets.env"
 
@@ -120,8 +124,39 @@ ensure_secrets_for_recovery() {
   write_secrets_file
 }
 
+ensure_tailscaled_for_recovery() {
+  if pgrep -x tailscaled >/dev/null 2>&1; then
+    echo "recover: tailscaled already running"
+    return 0
+  fi
+  if [[ ! -x "$TAILSCALED" ]]; then
+    echo "ERROR: missing $TAILSCALED" >&2
+    return 1
+  fi
+
+  echo "recover: starting tailscaled (no systemd)"
+  sudo mkdir -p "$STATEDIR" /run/tailscale
+  sudo setsid "$TAILSCALED" \
+    -state="$STATE" \
+    -statedir="$STATEDIR" \
+    -socket="$SOCKET" \
+    >/dev/null 2>&1 &
+
+  local n=0
+  while ! sudo test -S "$SOCKET"; do
+    sleep 0.2
+    n=$((n + 1))
+    if (( n > 50 )); then
+      echo "ERROR: tailscaled socket did not appear at $SOCKET" >&2
+      return 1
+    fi
+  done
+  echo "recover: tailscaled socket ready"
+}
+
 recover_missing_state() {
   ensure_secrets_for_recovery
+  ensure_tailscaled_for_recovery
 
   export TS_HOSTNAME="${TS_HOSTNAME:-cursor}"
   echo "recover: state missing — purging stale hostname=$TS_HOSTNAME then authenticating"
