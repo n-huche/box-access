@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Gate: packages + an existing Tailscale identity.
-# If state is missing: purge stale hostname via API, then authenticate once.
+# If state is missing: ensure secrets (prompt on TTY if needed), purge stale
+# hostname via API, then authenticate once.
 # Does not start daemons (sshd stays separate).
 
 set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")" && pwd)
 STATE=/var/lib/tailscale/tailscaled.state
-SECRETS_FILE=/home/box/.config/box-access/secrets.env
+SECRETS_DIR=/home/box/.config/box-access
+SECRETS_FILE="$SECRETS_DIR/secrets.env"
 
 # shellcheck source=lib/purge-stale-hostname.sh
 source "$REPO/lib/purge-stale-hostname.sh"
@@ -40,20 +42,86 @@ load_secrets() {
   fi
 }
 
-recover_missing_state() {
+write_secrets_file() {
+  mkdir -p "$SECRETS_DIR"
+  chmod 700 "$SECRETS_DIR"
+  umask 077
+  cat > "$SECRETS_FILE" <<EOF
+# Outside git. Used by box-access recovery only.
+TS_API_KEY=${TS_API_KEY}
+TS_AUTHKEY=${TS_AUTHKEY}
+TS_HOSTNAME=${TS_HOSTNAME}
+EOF
+  chmod 600 "$SECRETS_FILE"
+  echo "secrets: wrote $SECRETS_FILE (chmod 600)"
+}
+
+prompt_secret() {
+  # $1=var name  $2=prompt label
+  local var=$1 label=$2 value=
+  if [[ -n "${!var:-}" ]]; then
+    return 0
+  fi
+  if [[ ! -t 0 ]]; then
+    echo "ERROR: $var is unset and stdin is not a TTY (cannot prompt)." >&2
+    echo "Create $SECRETS_FILE with TS_API_KEY, TS_AUTHKEY, TS_HOSTNAME." >&2
+    exit 1
+  fi
+  printf '%s: ' "$label" >&2
+  read -r -s value
+  printf '\n' >&2
+  if [[ -z "$value" ]]; then
+    echo "ERROR: empty $var." >&2
+    exit 1
+  fi
+  printf -v "$var" '%s' "$value"
+  export "$var"
+}
+
+prompt_hostname() {
+  local value=
+  if [[ -n "${TS_HOSTNAME:-}" ]]; then
+    return 0
+  fi
+  if [[ ! -t 0 ]]; then
+    TS_HOSTNAME=cursor
+    export TS_HOSTNAME
+    return 0
+  fi
+  printf 'TS_HOSTNAME [%s]: ' "cursor" >&2
+  read -r value
+  TS_HOSTNAME="${value:-cursor}"
+  export TS_HOSTNAME
+}
+
+ensure_secrets_for_recovery() {
   load_secrets
 
-  if [[ -z "${TS_API_KEY:-}" ]]; then
-    echo "ERROR: missing $STATE and TS_API_KEY is not set." >&2
-    echo "Put TS_API_KEY in $SECRETS_FILE (chmod 600). Refusing to create a duplicate node." >&2
-    exit 1
+  local missing=0
+  [[ -z "${TS_API_KEY:-}" ]] && missing=1
+  [[ -z "${TS_AUTHKEY:-}" ]] && missing=1
+
+  if [[ "$missing" -eq 0 ]]; then
+    export TS_HOSTNAME="${TS_HOSTNAME:-cursor}"
+    if [[ ! -f "$SECRETS_FILE" ]]; then
+      write_secrets_file
+    fi
+    return 0
   fi
-  if [[ -z "${TS_AUTHKEY:-}" ]]; then
-    echo "ERROR: missing $STATE and TS_AUTHKEY is not set." >&2
-    echo "Recovery needs both TS_API_KEY (purge stale device) and TS_AUTHKEY (authenticate)." >&2
-    echo "Put both in $SECRETS_FILE (chmod 600)." >&2
-    exit 1
+
+  echo "secrets: recovery needs TS_API_KEY + TS_AUTHKEY (paste from password manager)"
+  if [[ ! -f "$SECRETS_FILE" ]]; then
+    echo "secrets: will create $SECRETS_FILE"
   fi
+
+  prompt_secret TS_API_KEY "TS_API_KEY (hidden)"
+  prompt_secret TS_AUTHKEY "TS_AUTHKEY (hidden)"
+  prompt_hostname
+  write_secrets_file
+}
+
+recover_missing_state() {
+  ensure_secrets_for_recovery
 
   export TS_HOSTNAME="${TS_HOSTNAME:-cursor}"
   echo "recover: state missing — purging stale hostname=$TS_HOSTNAME then authenticating"

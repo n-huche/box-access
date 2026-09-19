@@ -53,13 +53,15 @@ TS_AUTHKEY=tskey-auth-...
 # TS_HOSTNAME=cursor
 ```
 
+If recovery runs and the file (or a required key) is missing, `bootstrap.sh` **prompts on the terminal** (hidden input for the two keys), creates `~/.config/box-access/` (0700), and writes `secrets.env` (0600). Non-interactive runs (no TTY) still fail with a clear error instead of hanging.
+
 ## Recovery flow (this repo only)
 
 When `/var/lib/tailscale/tailscaled.state` is **missing**:
 
 1. Load `secrets.env` (and optional `$REPO/.env`)
-2. Require `TS_API_KEY` and `TS_AUTHKEY` — clear error if either is missing (never silently create a duplicate node)
-3. `TS_HOSTNAME` defaults to `cursor`
+2. If `TS_API_KEY` / `TS_AUTHKEY` are missing: prompt on a TTY (hidden), create `~/.config/box-access/secrets.env` (0600), or exit clearly when not a TTY
+3. `TS_HOSTNAME` defaults to `cursor` (prompted with that default when creating the file)
 4. List tailnet devices; **DELETE** each device whose hostname equals `TS_HOSTNAME` (case-sensitive; noop if none)
 5. `sudo tailscale up --authkey="$TS_AUTHKEY" --hostname="$TS_HOSTNAME"`
 
