@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
-# Gate: packages + an existing Tailscale identity.
-# If state is missing: ensure secrets (prompt on TTY if needed), start
-# tailscaled (this host has no systemd), purge stale hostname via API,
-# then authenticate once.
-# Does not start sshd (upkeep does).
+# Gate: everything needed to reach this box over Tailscale SSH.
+# Packages, identity (recovery if state is missing), authorized_keys,
+# tailscaled + sshd on <tailscale-ipv4>:2222, and watchdogs that keep them up.
+# Does not clone other repos. Does not start cron or AOS.
 
 set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")" && pwd)
+HOME_BOX="${HOME_BOX:-/home/box}"
+ACCESS_DST="${HOME_BOX}/access"
 STATE=/var/lib/tailscale/tailscaled.state
 STATEDIR=/var/lib/tailscale
 SOCKET=/run/tailscale/tailscaled.sock
 TAILSCALED=/usr/sbin/tailscaled
-SECRETS_DIR=/home/box/.config/box-access
+SECRETS_DIR="${HOME_BOX}/.config/box-access"
 SECRETS_FILE="$SECRETS_DIR/secrets.env"
+AUTH_KEYS="${HOME_BOX}/.ssh/authorized_keys"
 
 # shellcheck source=lib/purge-stale-hostname.sh
 source "$REPO/lib/purge-stale-hostname.sh"
@@ -31,14 +33,14 @@ ensure_pkg() {
 
 load_secrets() {
   if [[ -f "$SECRETS_FILE" ]]; then
-    # shellcheck disable=SC1090
+    # shellcheck source=/dev/null
     set -a
     source "$SECRETS_FILE"
     set +a
     echo "secrets: loaded $SECRETS_FILE"
   fi
   if [[ -f "$REPO/.env" ]]; then
-    # shellcheck disable=SC1091
+    # shellcheck source=/dev/null
     set -a
     source "$REPO/.env"
     set +a
@@ -61,7 +63,6 @@ EOF
 }
 
 prompt_secret() {
-  # $1=var name  $2=prompt label
   local var=$1 label=$2 value=
   if [[ -n "${!var:-}" ]]; then
     return 0
@@ -168,6 +169,38 @@ recover_missing_state() {
   echo "recover: done"
 }
 
+ensure_ssh_authorized_key() {
+  mkdir -p "${HOME_BOX}/.ssh"
+  chmod 700 "${HOME_BOX}/.ssh"
+  if [[ -s "$AUTH_KEYS" ]]; then
+    echo "ssh: authorized_keys present"
+    return 0
+  fi
+  if [[ ! -t 0 ]]; then
+    echo "ERROR: $AUTH_KEYS is empty and stdin is not a TTY." >&2
+    echo "Put an SSH public key in $AUTH_KEYS (chmod 600)." >&2
+    exit 1
+  fi
+  printf 'SSH public key (required): ' >&2
+  local line=
+  read -r line
+  if [[ -z "$line" ]]; then
+    echo "ERROR: empty SSH public key." >&2
+    exit 1
+  fi
+  printf '%s\n' "$line" >>"$AUTH_KEYS"
+  chmod 600 "$AUTH_KEYS"
+  echo "ssh: wrote $AUTH_KEYS"
+}
+
+install_units() {
+  mkdir -p "$ACCESS_DST"
+  install -m 755 "$REPO/start.sh" "${ACCESS_DST}/start.sh"
+  install -m 755 "$REPO/units/tailscale-watchdog.sh" "${ACCESS_DST}/tailscale-watchdog.sh"
+  install -m 755 "$REPO/units/sshd-watchdog.sh" "${ACCESS_DST}/sshd-watchdog.sh"
+  echo "installed: ${ACCESS_DST}/start.sh + watchdogs"
+}
+
 echo "repo=$REPO"
 
 while read -r pkg; do
@@ -185,3 +218,7 @@ if ! sudo test -f "$STATE"; then
 else
   echo "gate-ok: tailscale state present"
 fi
+
+ensure_ssh_authorized_key
+install_units
+"${ACCESS_DST}/start.sh"
