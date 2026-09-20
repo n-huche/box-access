@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
 # Gate: everything needed to reach this box over Tailscale SSH.
-# Packages, identity (recovery if state is missing), authorized_keys,
-# tailscaled + sshd on <tailscale-ipv4>:2222, and watchdogs that keep them up.
-# Does not clone other repos. Does not start cron or AOS.
+# Packages, identity, authorized_keys, and a one-shot start of tailscaled
+# + sshd on <tailscale-ipv4>:2222. Does not babysit them (host persistence
+# is not this repo). Does not clone other repos. Does not start cron or AOS.
 
 set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")" && pwd)
 HOME_BOX="${HOME_BOX:-/home/box}"
-ACCESS_DST="${HOME_BOX}/access"
 STATE=/var/lib/tailscale/tailscaled.state
 STATEDIR=/var/lib/tailscale
 SOCKET=/run/tailscale/tailscaled.sock
 TAILSCALED=/usr/sbin/tailscaled
+SSHD=/usr/sbin/sshd
+SSH_PORT=2222
 SECRETS_DIR="${HOME_BOX}/.config/box-access"
 SECRETS_FILE="$SECRETS_DIR/secrets.env"
 AUTH_KEYS="${HOME_BOX}/.ssh/authorized_keys"
@@ -125,9 +126,9 @@ ensure_secrets_for_recovery() {
   write_secrets_file
 }
 
-ensure_tailscaled_for_recovery() {
+ensure_tailscaled() {
   if pgrep -x tailscaled >/dev/null 2>&1; then
-    echo "recover: tailscaled already running"
+    echo "tailscale: tailscaled already running"
     return 0
   fi
   if [[ ! -x "$TAILSCALED" ]]; then
@@ -135,7 +136,7 @@ ensure_tailscaled_for_recovery() {
     return 1
   fi
 
-  echo "recover: starting tailscaled (no systemd)"
+  echo "tailscale: starting tailscaled (no systemd; one-shot, not a watchdog)"
   sudo mkdir -p "$STATEDIR" /run/tailscale
   sudo setsid "$TAILSCALED" \
     -state="$STATE" \
@@ -152,12 +153,12 @@ ensure_tailscaled_for_recovery() {
       return 1
     fi
   done
-  echo "recover: tailscaled socket ready"
+  echo "tailscale: socket ready"
 }
 
 recover_missing_state() {
   ensure_secrets_for_recovery
-  ensure_tailscaled_for_recovery
+  ensure_tailscaled
 
   export TS_HOSTNAME="${TS_HOSTNAME:-cursor}"
   echo "recover: state missing — purging stale hostname=$TS_HOSTNAME then authenticating"
@@ -193,12 +194,58 @@ ensure_ssh_authorized_key() {
   echo "ssh: wrote $AUTH_KEYS"
 }
 
-install_units() {
-  mkdir -p "$ACCESS_DST"
-  install -m 755 "$REPO/start.sh" "${ACCESS_DST}/start.sh"
-  install -m 755 "$REPO/units/tailscale-watchdog.sh" "${ACCESS_DST}/tailscale-watchdog.sh"
-  install -m 755 "$REPO/units/sshd-watchdog.sh" "${ACCESS_DST}/sshd-watchdog.sh"
-  echo "installed: ${ACCESS_DST}/start.sh + watchdogs"
+tailscale_ip() {
+  local ip
+  ip=$(sudo tailscale ip -4 2>/dev/null | head -n1 | tr -d '[:space:]' || true)
+  if [[ -n "$ip" ]]; then
+    printf '%s\n' "$ip"
+    return 0
+  fi
+  ip=$(ip -4 -o addr show tailscale0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1)
+  if [[ -n "$ip" ]]; then
+    printf '%s\n' "$ip"
+    return 0
+  fi
+  return 1
+}
+
+sshd_listening() {
+  local ip=$1
+  ss -lntp 2>/dev/null | grep -qE "${ip}:${SSH_PORT}\\b"
+}
+
+ensure_sshd() {
+  local n=0 ip=
+  while true; do
+    ip=$(tailscale_ip) || ip=""
+    if [[ -n "$ip" ]] && ip -4 addr show tailscale0 2>/dev/null | grep -q "inet ${ip}/"; then
+      break
+    fi
+    sleep 0.2
+    n=$((n + 1))
+    if (( n > 50 )); then
+      echo "ERROR: no Tailscale IPv4 yet" >&2
+      return 1
+    fi
+  done
+
+  if sshd_listening "$ip"; then
+    echo "ssh: already listening on $ip:$SSH_PORT"
+    return 0
+  fi
+  if [[ ! -x "$SSHD" ]]; then
+    echo "ERROR: missing $SSHD" >&2
+    return 1
+  fi
+  echo "ssh: starting sshd ListenAddress=$ip:$SSH_PORT (one-shot, not a watchdog)"
+  sudo setsid "$SSHD" -D -e -p "$SSH_PORT" -o "ListenAddress=$ip" >/dev/null 2>&1 &
+  sleep 1
+  if sshd_listening "$ip"; then
+    echo "ssh: listening on $ip:$SSH_PORT"
+    return 0
+  fi
+  echo "ERROR: sshd not listening on $ip:$SSH_PORT" >&2
+  return 1
 }
 
 echo "repo=$REPO"
@@ -220,5 +267,5 @@ else
 fi
 
 ensure_ssh_authorized_key
-install_units
-"${ACCESS_DST}/start.sh"
+ensure_tailscaled
+ensure_sshd
