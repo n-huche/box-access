@@ -71,7 +71,7 @@ Full path without the keep-alive loops (`sshd` still listens on the Tailscale IP
 
 Flags can be combined. `./bootstrap.sh` forwards them unchanged.
 
-Re-run `./up.sh` after reboot or Update. The watchdogs then keep `tailscaled` and `sshd` up if either process crashes. They are not systemd units. A reboot stops the loops until `up.sh` starts them again.
+There is no systemd. After an Update or reboot the watchdogs are dead: from the VM console run `./up.sh` (or start it via box-upkeep). Once they are up, the loops keep `tailscaled` and `sshd` up if either process crashes.
 
 ## What one run does
 
