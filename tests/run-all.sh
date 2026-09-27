@@ -3,6 +3,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 
+bash -n up.sh
 bash -n bootstrap.sh
 bash -n lib/apt-update.sh
 bash -n lib/purge-stale-hostname.sh

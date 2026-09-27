@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Keep tailscaled alive by reusing /var/lib/tailscale (the current identity).
-# Does not create a node. Missing state is ./bootstrap.sh recovery, not this loop.
+# Does not create a node. Missing state is ./up.sh recovery, not this loop.
 # Vendored into box-access; do not call out to another repo at runtime.
 
 set -u

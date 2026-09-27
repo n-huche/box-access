@@ -3,7 +3,8 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 readme=$ROOT/README.md
-boot=$ROOT/bootstrap.sh
+entry=$ROOT/up.sh
+wrapper=$ROOT/bootstrap.sh
 
 need() {
   local file=$1 needle=$2
@@ -13,6 +14,7 @@ need() {
   fi
 }
 
+need "$readme" "./up.sh"
 need "$readme" "./bootstrap.sh"
 need "$readme" "secrets.env"
 need "$readme" "TS_API_KEY"
@@ -25,10 +27,18 @@ need "$readme" "units/sshd-watchdog.sh"
 need "$readme" "2222"
 need "$readme" "ssh-keygen -R"
 need "$readme" "Tailscale IPv4"
-need "$boot" "reclaim_magicdns_if_needed"
-need "$boot" "start_watchdogs"
-need "$boot" "disable_hanging_chrome_apt_sources"
-need "$boot" "prepare_purge_self_markers"
+need "$entry" "reclaim_magicdns_if_needed"
+need "$entry" "start_watchdogs"
+need "$entry" "disable_hanging_chrome_apt_sources"
+need "$entry" "prepare_purge_self_markers"
+need "$entry" "./up.sh"
+need "$wrapper" 'exec'
+need "$wrapper" 'up.sh'
+if grep -q 'tailscale up' "$wrapper"; then
+  echo "FAIL bootstrap.sh is not a thin wrapper"
+  exit 1
+fi
+need "$ROOT/units/tailscale-watchdog.sh" "./up.sh"
 need "$ROOT/units/tailscale-watchdog.sh" "STATE=/var/lib/tailscale/tailscaled.state"
 need "$ROOT/units/tailscale-watchdog.sh" "STATEDIR=/var/lib/tailscale"
 need "$ROOT/units/tailscale-watchdog.sh" "SOCKET=/run/tailscale/tailscaled.sock"

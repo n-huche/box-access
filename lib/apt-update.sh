@@ -1,4 +1,4 @@
-# Apt helpers for bootstrap.
+# Apt helpers for ./up.sh.
 # Google Chrome's apt source (google-chrome.sources / google-chrome.list)
 # can stall `apt-get update` forever on https://dl.google.com/ (apt prints
 # "Ign:" and retries). Rename those files so apt ignores them. Short acquire
