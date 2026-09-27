@@ -2,16 +2,17 @@
 
 One entrypoint reaches this box over Tailscale SSH and keeps that path up.
 
-`./bootstrap.sh` installs packages, recovers the Tailscale identity, reclaims MagicDNS, binds `sshd` to the Tailscale IPv4 on port **2222**, and starts keep-alive watchdogs. Other repos do not configure Tailscale or SSH login.
+`./up.sh` installs packages, recovers the Tailscale identity, reclaims MagicDNS, binds `sshd` to the Tailscale IPv4 on port **2222**, and starts keep-alive watchdogs. Other repos do not configure Tailscale or SSH login. `./bootstrap.sh` is a thin wrapper that execs `./up.sh` with the same arguments.
 
-After a Grok Bot / Cursor **Update**, apt packages and `/var/lib/tailscale` are wiped. `/home/box` (secrets, `authorized_keys`) and `/workspace` (this repo) persist. Run `./bootstrap.sh` again. It reinstalls packages and re-authenticates. It does not invent a second identity when the state file is still there.
+After a Grok Bot / Cursor **Update**, apt packages and `/var/lib/tailscale` are wiped. `/home/box` (secrets, `authorized_keys`) and `/workspace` (this repo) persist. Run `./up.sh` again. It reinstalls packages and re-authenticates. It does not invent a second identity when the state file is still there.
 
 Identity stays: hostname **`cursor`**, SSH user **`box`**, port **2222**, listen address **the Tailscale IPv4 only** (never `0.0.0.0`).
 
 ## Layout
 
 ```text
-bootstrap.sh                    # install → recover → MagicDNS → sshd → watchdogs
+up.sh                           # install → recover → MagicDNS → sshd → watchdogs
+bootstrap.sh                    # exec ./up.sh "$@"; same arguments
 lib/purge-stale-hostname.sh     # API purge; skips the live node
 lib/purge_select.py             # match stale devices by hostname, keep our IPv4
 lib/magicdns-reclaim.sh         # bounce tmp → desired name when DNS is stuck
@@ -22,17 +23,19 @@ units/tailscale-watchdog.sh     # restart tailscaled only when state already exi
 units/sshd-watchdog.sh          # sshd on the current Tailscale IPv4:2222
 ```
 
-Watchdogs run from this repo. Bootstrap does not call another clone.
+Watchdogs run from this repo. `up.sh` does not call another clone.
 
 ## Use
 
 ```bash
 cd /workspace/box-access
 git pull
-./bootstrap.sh
+./up.sh
 ```
 
-From another machine on the tailnet, after bootstrap prints the address:
+`./bootstrap.sh` does the same thing. Prefer `./up.sh`.
+
+From another machine on the tailnet, after `up.sh` prints the address:
 
 ```bash
 ssh -p 2222 box@cursor
@@ -42,10 +45,10 @@ ssh -p 2222 box@<tailscale-ipv4>
 Packages, host keys, and the Chrome apt workaround only (no auth, no sshd, no watchdogs):
 
 ```bash
-./bootstrap.sh --install-only
+./up.sh --install-only
 ```
 
-Re-run `./bootstrap.sh` after reboot or Update. The watchdogs then keep `tailscaled` and `sshd` up if either process crashes. They are not systemd units. A reboot stops the loops until bootstrap starts them again.
+Re-run `./up.sh` after reboot or Update. The watchdogs then keep `tailscaled` and `sshd` up if either process crashes. They are not systemd units. A reboot stops the loops until `up.sh` starts them again.
 
 ## What one run does
 
@@ -55,14 +58,14 @@ Re-run `./bootstrap.sh` after reboot or Update. The watchdogs then keep `tailsca
 4. Load `/home/box/.config/box-access/secrets.env` (`TS_API_KEY`, `TS_AUTHKEY`, `TS_HOSTNAME`, default hostname `cursor`).
 5. Start `tailscaled`. An existing `/var/lib/tailscale/tailscaled.state` is reused. A missing state file means recovery, not a silent new node.
 6. **Recovery** when state is missing, the session is `NeedsLogin` / logged out, or there is no Tailscale IPv4 and the session is dead. A logged-in session that is only down (`Stopped`) is `tailscale up` without a new auth key.
-7. On recovery, **purge** devices whose hostname equals `TS_HOSTNAME`, except this machine's live node, then `tailscale up --authkey --hostname`. If the auth key fails on a TTY, bootstrap starts interactive `tailscale up` and prints the browser URL.
+7. On recovery, **purge** devices whose hostname equals `TS_HOSTNAME`, except this machine's live node, then `tailscale up --authkey --hostname`. If the auth key fails on a TTY, `up.sh` starts interactive `tailscale up` and prints the browser URL.
 8. **MagicDNS reclaim** when the hostname is right but the DNS name is still `cursor-1` (see below).
 9. Ensure `/home/box/.ssh/authorized_keys`.
 10. Start the tailscaled and sshd watchdogs. `sshd` listens only on `<tailscale-ipv4>:2222`.
 
 ## Debian apt: Tailscale is not in the distro
 
-`tailscale` is not in Debian apt (including Debian 13 / trixie). Bootstrap adds the official stable repo for the current suite from `/etc/os-release` (`VERSION_CODENAME`, for example `trixie`). It does not hardcode a suite.
+`tailscale` is not in Debian apt (including Debian 13 / trixie). `up.sh` adds the official stable repo for the current suite from `/etc/os-release` (`VERSION_CODENAME`, for example `trixie`). It does not hardcode a suite.
 
 - Signed keyring: `/usr/share/keyrings/tailscale-archive-keyring.gpg`
 - Source list: `/etc/apt/sources.list.d/tailscale.list` (`pkgs.tailscale.com` stable)
@@ -73,7 +76,7 @@ Re-run `./bootstrap.sh` after reboot or Update. The watchdogs then keep `tailsca
 
 `/etc/apt/sources.list.d/google-chrome.sources` (and sometimes `google-chrome.list`) points at `https://dl.google.com/linux/chrome...`. When that host does not answer, apt prints `Ign:` and retries until the update never finishes.
 
-On every run, before `apt-get update`, bootstrap **renames** those files so apt ignores them:
+On every run, before `apt-get update`, `up.sh` **renames** those files so apt ignores them:
 
 ```text
 google-chrome.sources → google-chrome.sources.disabled-by-box-access
@@ -110,17 +113,17 @@ TS_AUTHKEY=tskey-auth-...
 # TS_HOSTNAME=cursor
 ```
 
-If recovery runs and a required key is missing, `bootstrap.sh` prompts on the terminal (hidden input for the two Tailscale keys), creates `~/.config/box-access/` (0700), and writes `secrets.env` (0600). Empty `authorized_keys`: prompt for one public key (not hidden). Non-interactive runs (no TTY) fail with a clear error instead of hanging.
+If recovery runs and a required key is missing, `up.sh` prompts on the terminal (hidden input for the two Tailscale keys), creates `~/.config/box-access/` (0700), and writes `secrets.env` (0600). Empty `authorized_keys`: prompt for one public key (not hidden). Non-interactive runs (no TTY) fail with a clear error instead of hanging.
 
-Bootstrap never prints secret values. Auth-key failures are redacted before they are shown.
+`up.sh` never prints secret values. Auth-key failures are redacted before they are shown.
 
-Do not invent secrets. If `TS_AUTHKEY` is rejected, generate a new reusable auth key in the admin console, or complete the printed browser login URL. On a TTY, bootstrap starts that interactive `tailscale up`.
+Do not invent secrets. If `TS_AUTHKEY` is rejected, generate a new reusable auth key in the admin console, or complete the printed browser login URL. On a TTY, `up.sh` starts that interactive `tailscale up`.
 
 ## Purge does not delete the live node
 
 Recovery and MagicDNS reclaim delete tailnet devices whose **hostname** equals `TS_HOSTNAME`, so an offline `cursor` cannot force this box onto `cursor-1`.
 
-The live node is kept by **Tailscale IPv4**, not by comparing ids. The API device `id` is numeric. `tailscale status --json` `Self.ID` is often a different string, so an id comparison both misses this node and can delete it. Bootstrap reads `tailscale ip -4` (and `Self.TailscaleIPs`) and skips every API device whose addresses contain that IP.
+The live node is kept by **Tailscale IPv4**, not by comparing ids. The API device `id` is numeric. `tailscale status --json` `Self.ID` is often a different string, so an id comparison both misses this node and can delete it. `up.sh` reads `tailscale ip -4` (and `Self.TailscaleIPs`) and skips every API device whose addresses contain that IP.
 
 - No local node (wiped state, logged out): every device named `TS_HOSTNAME` is stale and can be deleted, then this box joins as that name.
 - Local node is up and its IPv4 is known: that device is skipped; other devices with the same hostname are deleted.
@@ -133,13 +136,13 @@ If an offline `cursor` still exists at join time, Tailscale gives this node Magi
 
 Example from production: `cursor-1.tailc4d0e9.ts.net` stuck, and the name to reclaim was `cursor.tailc4d0e9.ts.net`. The tailnet suffix is read from the current `DNSName`. It is not hardcoded.
 
-When `HostName` is the desired name and the DNS label is `cursor-1` (or `cursor-2`, …), or this node itself is registered under that suffixed name, bootstrap:
+When `HostName` is the desired name and the DNS label is `cursor-1` (or `cursor-2`, …), or this node itself is registered under that suffixed name, `up.sh`:
 
 1. Purges other devices named `TS_HOSTNAME`, skipping this node's Tailscale IPv4.
 2. Sets the hostname to **`tmp`**, waits until status shows that name.
 3. Sets the hostname back to `TS_HOSTNAME` and waits until the DNS label is exactly that name.
 
-Setting the desired hostname alone did not clear the sticky label. The `tmp` hop did. If reclaim does not finish, bootstrap warns and still brings up SSH on the Tailscale IPv4.
+Setting the desired hostname alone did not clear the sticky label. The `tmp` hop did. If reclaim does not finish, `up.sh` warns and still brings up SSH on the Tailscale IPv4.
 
 ## Keep-alive
 
@@ -154,7 +157,7 @@ Logs and lock directories sit next to the unit scripts (`*.log`, `*.lock/`) and 
 
 Reinstalling `openssh-server` after a wipe regenerates host keys. Clients then fail with `REMOTE HOST IDENTIFICATION HAS CHANGED` / `Host key verification failed`.
 
-Bootstrap cannot edit the Mac's `~/.ssh/known_hosts`. When host keys are created or regenerated, it prints fingerprints (at least ED25519 SHA256) and the client commands. It always prints fingerprints at the end of a successful run.
+`up.sh` cannot edit the Mac's `~/.ssh/known_hosts`. When host keys are created or regenerated, it prints fingerprints (at least ED25519 SHA256) and the client commands. It always prints fingerprints at the end of a successful run.
 
 On the client:
 
