@@ -20,6 +20,24 @@ for bad in "" 0.0.0.0 127.0.0.1 "*" "::" "10.1.2.3 extra"; do
 done
 echo "ok rejects wildcard and empty listen addresses"
 
+if [[ "$SSH_PORT" != "2222" ]]; then
+  echo "FAIL SSH_PORT=$SSH_PORT (want 2222 from lib/listen.sh)"
+  exit 1
+fi
+if ! declare -F tailscale_ip >/dev/null || ! declare -F sshd_listening >/dev/null; then
+  echo "FAIL listen helpers were not loaded with the watchdog"
+  exit 1
+fi
+if grep -q '^tailscale_ip()' "$ROOT/units/sshd-watchdog.sh" || grep -q '^PORT=' "$ROOT/units/sshd-watchdog.sh"; then
+  echo "FAIL watchdog still defines its own port or tailscale_ip"
+  exit 1
+fi
+if ! grep -q 'lib/listen.sh' "$ROOT/units/sshd-watchdog.sh" || ! grep -q 'listen.sh' "$ROOT/lib/common.sh"; then
+  echo "FAIL lib/listen.sh is not sourced by both the watchdog and common.sh"
+  exit 1
+fi
+echo "ok watchdog and orchestrator share lib/listen.sh (SSH_PORT=$SSH_PORT)"
+
 export BOX_ACCESS_SS_TEXT=$'LISTEN 0 128 100.64.0.8:2222 0.0.0.0:* users:(("sshd",pid=111,fd=3))\nLISTEN 0 128 0.0.0.0:2222 0.0.0.0:* users:(("sshd",pid=222,fd=4))\nLISTEN 0 128 100.64.0.9:2222 0.0.0.0:* users:(("sshd",pid=333,fd=5))\nLISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:(("sshd",pid=444,fd=6))'
 got=$(sshd_pids_except "100.64.0.8")
 if [[ "$got" != $'222\n333' ]]; then

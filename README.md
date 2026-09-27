@@ -16,6 +16,7 @@ Identity stays: hostname **`cursor`**, SSH user **`box`**, port **2222**, listen
 up.sh                           # run the steps below; honors flags
 bootstrap.sh                    # exec ./up.sh "$@"; same arguments
 lib/common.sh                   # paths, logging, secrets (never prints values)
+lib/listen.sh                   # SSH_PORT, tailscale_ip, valid_listen_ip
 lib/purge-stale-hostname.sh     # API purge; skips the live node
 lib/purge_select.py             # match stale devices by hostname, keep our IPv4
 lib/magicdns-reclaim.sh         # bounce tmp → desired name when DNS is stuck

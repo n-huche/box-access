@@ -1,21 +1,10 @@
 #!/usr/bin/env bash
 # sshd on the Tailscale IPv4 only, port 2222. Never 0.0.0.0.
 # Sets TS_IP. Watchdogs (09) adopt this listener; they are not required to bind it.
+# SSH_PORT, tailscale_ip, valid_listen_ip, and sshd_listening come from lib/listen.sh.
 
-valid_listen_ip() {
-  local ip=$1
-  [[ "$ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
-  case "$ip" in
-    0.0.0.0|127.0.0.1) return 1 ;;
-  esac
-  return 0
-}
-
-sshd_listening() {
-  local ip=$1
-  local esc=${ip//./\\.}
-  ss -lnt 2>/dev/null | grep -qE "${esc}:${SSH_PORT}\\b"
-}
+# shellcheck source=../lib/listen.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/listen.sh"
 
 ensure_sshd() {
   local n=0
