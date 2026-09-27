@@ -147,7 +147,7 @@ reclaim_magicdns_if_needed() {
   prepare_purge_self_markers
   try_purge_stale_hostname || true
   if ! bounce_hostname_for_magicdns "$TS_HOSTNAME"; then
-    echo "WARN: MagicDNS reclaim did not finish; SSH still uses the Tailscale IPv4 on port 2222." >&2
+    echo "WARN: MagicDNS reclaim did not finish; SSH still uses the Tailscale IPv4 on port ${SSH_PORT}." >&2
   fi
   return 0
 }

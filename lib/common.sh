@@ -18,7 +18,6 @@ box_access_set_paths() {
   SOCKET=/run/tailscale/tailscaled.sock
   TAILSCALED=/usr/sbin/tailscaled
   SSHD=/usr/sbin/sshd
-  SSH_PORT=2222
   SECRETS_DIR="${HOME_BOX}/.config/box-access"
   SECRETS_FILE="$SECRETS_DIR/secrets.env"
   AUTH_KEYS="${HOME_BOX}/.ssh/authorized_keys"
@@ -32,6 +31,8 @@ box_access_set_paths() {
 
 box_access_set_paths
 
+# shellcheck source=listen.sh
+source "$BOX_LIB_DIR/listen.sh"
 # shellcheck source=apt-update.sh
 source "$BOX_LIB_DIR/apt-update.sh"
 # shellcheck source=purge-stale-hostname.sh
@@ -171,19 +172,4 @@ try_purge_stale_hostname() {
   echo "WARN: purge of stale hostname=${TS_HOSTNAME} failed (invalid TS_API_KEY, or the live Tailscale IPv4 was unknown)." >&2
   echo "WARN: continuing. A device is kept when its addresses contain this node's Tailscale IPv4." >&2
   return 0
-}
-
-tailscale_ip() {
-  local ip
-  ip=$(sudo tailscale ip -4 2>/dev/null | head -n1 | tr -d '[:space:]' || true)
-  if [[ -n "$ip" ]]; then
-    printf '%s\n' "$ip"
-    return 0
-  fi
-  ip=$(ip -4 -o addr show tailscale0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1)
-  if [[ -n "$ip" ]]; then
-    printf '%s\n' "$ip"
-    return 0
-  fi
-  return 1
 }

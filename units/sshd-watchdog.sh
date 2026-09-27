@@ -4,11 +4,15 @@
 
 set -u
 
+# Same SSH_PORT, tailscale_ip, and valid_listen_ip as ./up.sh. This file is
+# executed on its own, so it cannot source lib/common.sh (apt, secrets, purge).
+# shellcheck source=../lib/listen.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/listen.sh"
+
 DIR=$(cd "$(dirname "$0")" && pwd)
 LOG="$DIR/sshd-watchdog.log"
 LOCK_DIR="$DIR/sshd-watchdog.lock"
 BIN=/usr/sbin/sshd
-PORT=2222
 MIN_BACKOFF=5
 MAX_BACKOFF=60
 
@@ -16,43 +20,13 @@ log() {
   printf '%s %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*" >>"$LOG"
 }
 
-tailscale_ip() {
-  local ip
-  ip=$(sudo tailscale ip -4 2>/dev/null | head -n1 | tr -d '[:space:]' || true)
-  if [[ -n "$ip" ]]; then
-    printf '%s\n' "$ip"
-    return 0
-  fi
-  ip=$(ip -4 -o addr show tailscale0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1)
-  if [[ -n "$ip" ]]; then
-    printf '%s\n' "$ip"
-    return 0
-  fi
-  return 1
-}
-
-valid_listen_ip() {
-  local ip=$1
-  [[ "$ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
-  case "$ip" in
-    0.0.0.0|127.0.0.1) return 1 ;;
-  esac
-  return 0
-}
-
-is_listening() {
-  local ip=$1
-  local esc=${ip//./\\.}
-  ss -lnt 2>/dev/null | grep -qE "${esc}:${PORT}\\b"
-}
-
-# Print sshd pids listening on PORT whose local address is not $1.
+# Print sshd pids listening on SSH_PORT whose local address is not $1.
 # BOX_ACCESS_SS_TEXT, when set, replaces `ss` output (tests only).
 sshd_pids_except() {
   local keep=$1
   local ss_text="${BOX_ACCESS_SS_TEXT-}"
   if [[ -z "$ss_text" ]]; then
-    ss_text=$(sudo ss -lptn "sport = :${PORT}" 2>/dev/null || true)
+    ss_text=$(sudo ss -lptn "sport = :${SSH_PORT}" 2>/dev/null || true)
   fi
   python3 -c '
 import re, sys
@@ -69,14 +43,14 @@ for line in sys.stdin:
         continue
     for pid in re.findall(r"pid=(\d+)", line):
         print(pid)
-' "$keep" "$PORT" <<<"$ss_text" || true
+' "$keep" "$SSH_PORT" <<<"$ss_text" || true
 }
 
 stop_sshd_except() {
   local keep=$1 pid killed=0
   while IFS= read -r pid; do
     [[ -n "$pid" ]] || continue
-    log "stopping sshd pid=$pid (not ListenAddress=$keep:$PORT)"
+    log "stopping sshd pid=$pid (not ListenAddress=$keep:$SSH_PORT)"
     sudo kill "$pid" 2>/dev/null || true
     killed=1
   done < <(sshd_pids_except "$keep")
@@ -129,19 +103,19 @@ start_sshd() {
     return 1
   fi
   stop_sshd_except "$ip"
-  if ! sudo "$BIN" -t -p "$PORT" -o "ListenAddress=$ip" >/dev/null 2>&1; then
+  if ! sudo "$BIN" -t -p "$SSH_PORT" -o "ListenAddress=$ip" >/dev/null 2>&1; then
     if ! sudo "$BIN" -t >/dev/null 2>&1; then
       log "WARN: sshd -t failed; trying to start anyway"
     fi
   fi
-  sudo setsid "$BIN" -D -e -p "$PORT" -o "ListenAddress=$ip" >>"$LOG" 2>&1 &
+  sudo setsid "$BIN" -D -e -p "$SSH_PORT" -o "ListenAddress=$ip" >>"$LOG" 2>&1 &
   local pid=$!
   sleep 1
-  if is_listening "$ip"; then
-    log "started sshd ListenAddress=$ip:$PORT (spawn_pid=$pid)"
+  if sshd_listening "$ip"; then
+    log "started sshd ListenAddress=$ip:$SSH_PORT (spawn_pid=$pid)"
     return 0
   fi
-  log "ERROR: sshd not listening on $ip:$PORT after start"
+  log "ERROR: sshd not listening on $ip:$SSH_PORT after start"
   return 1
 }
 
@@ -166,10 +140,10 @@ main() {
       continue
     }
 
-    if is_listening "$ip"; then
+    if sshd_listening "$ip"; then
       backoff=$MIN_BACKOFF
-      log "adopting existing listener on $ip:$PORT"
-      while is_listening "$ip"; do
+      log "adopting existing listener on $ip:$SSH_PORT"
+      while sshd_listening "$ip"; do
         sleep 5
         now=$(tailscale_ip) || now=""
         if [[ -n "$now" && "$now" != "$ip" ]]; then
@@ -178,13 +152,13 @@ main() {
           break
         fi
       done
-      if ! is_listening "$ip"; then
-        log "listener on $ip:$PORT gone; will restart"
+      if ! sshd_listening "$ip"; then
+        log "listener on $ip:$SSH_PORT gone; will restart"
       fi
       continue
     fi
 
-    log "no listener on $ip:$PORT; starting sshd"
+    log "no listener on $ip:$SSH_PORT; starting sshd"
     if start_sshd "$ip"; then
       backoff=$MIN_BACKOFF
       continue
