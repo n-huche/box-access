@@ -66,9 +66,9 @@ wait_for_tailscale() {
   local n=0
   while ! pgrep -x tailscaled >/dev/null 2>&1; do
     log "waiting for tailscaled..."
-    sleep 3
+    sleep "$SSH_IPV4_WAIT_INTERVAL"
     n=$((n + 1))
-    if (( n > 40 )); then
+    if (( n >= SSH_IPV4_WAIT_TRIES )); then
       log "ERROR: tailscaled still down after wait"
       return 1
     fi
@@ -86,9 +86,9 @@ wait_for_tailscale() {
     else
       log "waiting for tailscale0 address (got=${ip:-none})..."
     fi
-    sleep 3
+    sleep "$SSH_IPV4_WAIT_INTERVAL"
     n=$((n + 1))
-    if (( n > 40 )); then
+    if (( n >= SSH_IPV4_WAIT_TRIES )); then
       log "ERROR: no tailscale IP yet"
       return 1
     fi

@@ -6,6 +6,10 @@ if [[ -z "${BOX_ACCESS_LISTEN_LOADED:-}" ]]; then
   BOX_ACCESS_LISTEN_LOADED=1
   # sshd for this box. The distro listener on port 22 is a different port.
   SSH_PORT="${SSH_PORT:-2222}"
+  # Shared by steps/08-sshd.sh and units/sshd-watchdog.sh.
+  # 40 * 3s is about 2 minutes.
+  SSH_IPV4_WAIT_INTERVAL="${SSH_IPV4_WAIT_INTERVAL:-3}"
+  SSH_IPV4_WAIT_TRIES="${SSH_IPV4_WAIT_TRIES:-40}"
 fi
 
 tailscale_ip() {
