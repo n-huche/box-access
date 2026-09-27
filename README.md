@@ -84,7 +84,7 @@ Re-run `./up.sh` after reboot or Update. The watchdogs then keep `tailscaled` an
 5. **`05-auth.sh`** — On recovery, `tailscale up --authkey --hostname`. If the auth key fails on a TTY, start interactive `tailscale up` and print the browser URL. A logged-in session that is only down (`Stopped`) is `tailscale up` without a new auth key.
 6. **`06-magicdns.sh`** — Reclaim when the hostname is right but the DNS name is still `cursor-1` (see below).
 7. **`07-ssh-keys.sh`** — Ensure `/home/box/.ssh/authorized_keys`. Print host-key fingerprints again (and `ssh-keygen -R` when keys changed this run).
-8. **`08-sshd.sh`** — `sshd` listens only on `<tailscale-ipv4>:2222` (`ListenAddress=$TS_IP`). A wildcard check applies to port 2222 only. Port 22 is left alone.
+8. **`08-sshd.sh`** — `sshd` listens only on `<tailscale-ipv4>:2222` (`ListenAddress=$TS_IP`). It waits about 2 minutes for that IPv4, the same budget as the sshd watchdog. If the address is still missing, it warns and continues so the watchdogs start; they keep waiting and bind sshd. A wildcard check applies to port 2222 only. Port 22 is left alone.
 9. **`09-watchdogs.sh`** — Start the tailscaled and sshd watchdogs from `units/`. Skipped with `--no-watchdogs`.
 
 ## Debian apt: Tailscale is not in the distro
