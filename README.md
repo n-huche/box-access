@@ -8,6 +8,8 @@ After a Grok Bot / Cursor **Update**, apt packages and `/var/lib/tailscale` are 
 
 Identity stays: hostname **`cursor`**, SSH user **`box`**, port **2222**, listen address **the Tailscale IPv4 only** (never `0.0.0.0`).
 
+Port **2222** is never bound to `0.0.0.0`, `*`, or `[::]`. The package `sshd` on port **22** may listen on `0.0.0.0` and is left alone on purpose. `up.sh` does not kill it.
+
 ## Layout
 
 `up.sh` is only the orchestrator. It sources `lib/common.sh`, then each `steps/*.sh` in order. Steps share one shell, so `TS_HOSTNAME`, `TS_IP`, and the recovery reason carry forward. Each step is idempotent.
@@ -82,7 +84,7 @@ Re-run `./up.sh` after reboot or Update. The watchdogs then keep `tailscaled` an
 5. **`05-auth.sh`** — On recovery, `tailscale up --authkey --hostname`. If the auth key fails on a TTY, start interactive `tailscale up` and print the browser URL. A logged-in session that is only down (`Stopped`) is `tailscale up` without a new auth key.
 6. **`06-magicdns.sh`** — Reclaim when the hostname is right but the DNS name is still `cursor-1` (see below).
 7. **`07-ssh-keys.sh`** — Ensure `/home/box/.ssh/authorized_keys`. Print host-key fingerprints again (and `ssh-keygen -R` when keys changed this run).
-8. **`08-sshd.sh`** — `sshd` listens only on `<tailscale-ipv4>:2222` (`ListenAddress=$TS_IP`).
+8. **`08-sshd.sh`** — `sshd` listens only on `<tailscale-ipv4>:2222` (`ListenAddress=$TS_IP`). A wildcard check applies to port 2222 only. Port 22 is left alone.
 9. **`09-watchdogs.sh`** — Start the tailscaled and sshd watchdogs from `units/`. Skipped with `--no-watchdogs`.
 
 ## Debian apt: Tailscale is not in the distro
@@ -171,7 +173,7 @@ Setting the desired hostname alone did not clear the sticky label. The `tmp` hop
 | Unit | Behavior |
 |---|---|
 | `units/tailscale-watchdog.sh` | Loop. If `tailscaled` is down, start `/usr/sbin/tailscaled -state=/var/lib/tailscale/tailscaled.state -statedir=/var/lib/tailscale -socket=/run/tailscale/tailscaled.sock`. Requires the state file (does not create an identity). `flock` so only one loop runs. Exponential backoff (5s–60s) when the binary or the state file is missing. |
-| `units/sshd-watchdog.sh` | Wait for a Tailscale IPv4, then `sshd -D -e -p 2222 -o ListenAddress=<that-ip>`. Restart if that process dies or the Tailscale IPv4 changes. Refuse `0.0.0.0` and any listener on port 2222 that is not the current Tailscale IPv4. |
+| `units/sshd-watchdog.sh` | Wait for a Tailscale IPv4, then `sshd -D -e -p 2222 -o ListenAddress=<that-ip>`. Restart if that process dies or the Tailscale IPv4 changes. Refuse `0.0.0.0` and any listener on port 2222 that is not the current Tailscale IPv4. The package sshd on port 22 is left alone. |
 
 Logs and lock directories sit next to the unit scripts (`*.log`, `*.lock/`) and are gitignored. Cron and AOS are not started.
 
@@ -205,5 +207,5 @@ Use the printed hostname (default `cursor`) and the printed Tailscale IPv4. Then
 - Do not consume the worker pool.
 - Do not clone or bootstrap other repos. Watchdogs in `units/` are the copies that run.
 - Do not start cron or AOS.
-- Never listen on `0.0.0.0`. `ListenAddress` is the Tailscale IPv4 only, port 2222.
+- Never listen on `0.0.0.0` for port 2222. `ListenAddress` is the Tailscale IPv4 only. `0.0.0.0:22` from the openssh package is left alone.
 - Never commit API keys, auth keys, or SSH private keys. Never print them.
