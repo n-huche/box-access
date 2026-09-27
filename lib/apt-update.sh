@@ -20,8 +20,10 @@ disable_hanging_chrome_apt_sources() {
     esac
     seen+=" $f "
     base=$(basename -- "$f")
+    # Already ignored by apt: *.disabled, *.disabled-by-box-access, or a
+    # collision suffix on that name. Do not append another .disabled-*.
     case "$base" in
-      *.disabled-by-box-access) continue ;;
+      *.disabled|*.disabled-*) continue ;;
     esac
     case "$base" in
       google-chrome.sources|google-chrome.list) ;;
