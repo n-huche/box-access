@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Gate: everything needed to reach this box over Tailscale SSH.
-# Packages, identity, authorized_keys, and a one-shot start of tailscaled
-# + sshd on <tailscale-ipv4>:2222. Does not babysit them (host persistence
-# is not this repo). Does not clone other repos. Does not start cron or AOS.
+# One entrypoint for Tailscale SSH on this box.
+# Packages, secrets, tailscaled, safe purge + auth, MagicDNS reclaim,
+# authorized_keys, sshd on <tailscale-ipv4>:2222, and keep-alive watchdogs.
+# Does not clone other repos. Does not start cron or AOS.
 
 set -euo pipefail
 
@@ -22,8 +22,12 @@ TS_APT_LIST=/etc/apt/sources.list.d/tailscale.list
 SSH_HOST_KEY_SNAPSHOT=""
 SSH_HOST_KEYS_CHANGED=0
 
+# shellcheck source=lib/apt-update.sh
+source "$REPO/lib/apt-update.sh"
 # shellcheck source=lib/purge-stale-hostname.sh
 source "$REPO/lib/purge-stale-hostname.sh"
+# shellcheck source=lib/magicdns-reclaim.sh
+source "$REPO/lib/magicdns-reclaim.sh"
 
 os_release_var() {
   local key=$1
@@ -83,7 +87,7 @@ ensure_tailscale_apt_repo() {
 
   if ! command -v curl >/dev/null 2>&1; then
     echo "tailscale-apt: installing curl to fetch the official repo"
-    sudo apt-get update -y
+    apt_get_update
     sudo DEBIAN_FRONTEND=noninteractive apt-get install -y curl
   fi
 
@@ -96,7 +100,7 @@ ensure_tailscale_apt_repo() {
     | sudo tee "$TS_APT_LIST" >/dev/null
   sudo chmod 0644 "$TS_APT_LIST"
   echo "tailscale-apt: wrote $TS_APT_LIST (signed-by $TS_APT_KEYRING)"
-  sudo apt-get update -y
+  apt_get_update
 }
 
 ensure_pkg() {
@@ -106,8 +110,17 @@ ensure_pkg() {
     return 0
   fi
   echo "pkg-install: $pkg"
-  sudo apt-get update -y
+  apt_get_update
   sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg"
+}
+
+ensure_python3() {
+  if command -v python3 >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "pkg-install: python3"
+  apt_get_update
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3
 }
 
 ssh_host_pub_checksums() {
@@ -189,12 +202,13 @@ write_secrets_file() {
   mkdir -p "$SECRETS_DIR"
   chmod 700 "$SECRETS_DIR"
   umask 077
-  cat > "$SECRETS_FILE" <<EOF
-# Outside git. Used by box-access recovery only.
-TS_API_KEY=${TS_API_KEY}
-TS_AUTHKEY=${TS_AUTHKEY}
-TS_HOSTNAME=${TS_HOSTNAME}
-EOF
+  # printf, not an unquoted heredoc: secret values must not be re-expanded.
+  {
+    printf '%s\n' "# Outside git. Used by box-access recovery only."
+    printf 'TS_API_KEY=%s\n' "$TS_API_KEY"
+    printf 'TS_AUTHKEY=%s\n' "$TS_AUTHKEY"
+    printf 'TS_HOSTNAME=%s\n' "$TS_HOSTNAME"
+  } > "$SECRETS_FILE"
   chmod 600 "$SECRETS_FILE"
   echo "secrets: wrote $SECRETS_FILE (chmod 600)"
 }
@@ -262,6 +276,10 @@ ensure_secrets_for_recovery() {
   write_secrets_file
 }
 
+redact_secrets() {
+  sed -E 's/tskey-[A-Za-z0-9._:+/=-]+/[redacted]/g'
+}
+
 ensure_tailscaled() {
   if pgrep -x tailscaled >/dev/null 2>&1; then
     echo "tailscale: tailscaled already running"
@@ -272,7 +290,11 @@ ensure_tailscaled() {
     return 1
   fi
 
-  echo "tailscale: starting tailscaled (no systemd; one-shot, not a watchdog)"
+  if [[ -f "$STATE" ]] || sudo test -f "$STATE"; then
+    echo "tailscale: starting tailscaled (reusing $STATE)"
+  else
+    echo "tailscale: starting tailscaled so recovery can authenticate (no state file yet)"
+  fi
   sudo mkdir -p "$STATEDIR" /run/tailscale
   sudo setsid "$TAILSCALED" \
     -state="$STATE" \
@@ -311,11 +333,16 @@ tailscale_status_logged_out() {
 }
 
 try_purge_stale_hostname() {
+  if [[ -z "${TS_API_KEY:-}" ]]; then
+    echo "WARN: TS_API_KEY unset; skipping purge of hostname=${TS_HOSTNAME:-cursor}." >&2
+    echo "WARN: if MagicDNS stays on ${TS_HOSTNAME:-cursor}-1, put the API key in $SECRETS_FILE and re-run." >&2
+    return 0
+  fi
   if purge_stale_hostname; then
     return 0
   fi
-  echo "WARN: purge of stale hostname=${TS_HOSTNAME} failed (TS_API_KEY may be invalid/expired; HTTP 401 is typical)." >&2
-  echo "WARN: continuing; auth can still proceed. If MagicDNS is sticky, delete the offline device named ${TS_HOSTNAME} in the admin console (or re-run purge when the API key works)." >&2
+  echo "WARN: purge of stale hostname=${TS_HOSTNAME} failed (invalid TS_API_KEY, or the live Tailscale IPv4 was unknown)." >&2
+  echo "WARN: continuing. A device is kept when its addresses contain this node's Tailscale IPv4." >&2
   return 0
 }
 
@@ -339,7 +366,7 @@ tailscale_up_with_auth() {
     return 0
   fi
   if [[ -n "$err" ]]; then
-    echo "$err" >&2
+    printf '%s\n' "$err" | redact_secrets >&2
   fi
   print_authkey_next_steps
   if [[ -t 0 ]]; then
@@ -357,8 +384,9 @@ recover_tailscale() {
   ensure_tailscaled
 
   export TS_HOSTNAME="${TS_HOSTNAME:-cursor}"
-  echo "recover: $reason — purging stale hostname=$TS_HOSTNAME (best-effort) then authenticating as $TS_HOSTNAME"
+  echo "recover: $reason — purging stale hostname=$TS_HOSTNAME (keeping the live node) then authenticating as $TS_HOSTNAME"
 
+  prepare_purge_self_markers
   try_purge_stale_hostname
   tailscale_up_with_auth
   echo "recover: done"
@@ -475,14 +503,24 @@ tailscale_ip() {
 
 sshd_listening() {
   local ip=$1
-  ss -lntp 2>/dev/null | grep -qE "${ip}:${SSH_PORT}\\b"
+  local esc=${ip//./\\.}
+  ss -lnt 2>/dev/null | grep -qE "${esc}:${SSH_PORT}\\b"
+}
+
+valid_listen_ip() {
+  local ip=$1
+  [[ "$ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
+  case "$ip" in
+    0.0.0.0|127.0.0.1) return 1 ;;
+  esac
+  return 0
 }
 
 ensure_sshd() {
   local n=0 ip=
   while true; do
     ip=$(tailscale_ip) || ip=""
-    if [[ -n "$ip" ]] && ip -4 addr show tailscale0 2>/dev/null | grep -q "inet ${ip}/"; then
+    if valid_listen_ip "$ip" && ip -4 addr show tailscale0 2>/dev/null | grep -q "inet ${ip}/"; then
       break
     fi
     sleep 0.2
@@ -501,7 +539,7 @@ ensure_sshd() {
     echo "ERROR: missing $SSHD" >&2
     return 1
   fi
-  echo "ssh: starting sshd ListenAddress=$ip:$SSH_PORT (one-shot, not a watchdog)"
+  echo "ssh: starting sshd ListenAddress=$ip:$SSH_PORT"
   sudo setsid "$SSHD" -D -e -p "$SSH_PORT" -o "ListenAddress=$ip" >/dev/null 2>&1 &
   sleep 1
   if sshd_listening "$ip"; then
@@ -512,7 +550,47 @@ ensure_sshd() {
   return 1
 }
 
+start_watchdogs() {
+  local ts="$REPO/units/tailscale-watchdog.sh"
+  local sshw="$REPO/units/sshd-watchdog.sh"
+  if [[ ! -x "$ts" || ! -x "$sshw" ]]; then
+    echo "ERROR: watchdog scripts missing under $REPO/units" >&2
+    return 1
+  fi
+  echo "watchdog: starting tailscaled keep-alive ($ts)"
+  nohup "$ts" >/dev/null 2>&1 &
+  sleep 1
+  echo "watchdog: starting sshd keep-alive ($sshw)"
+  nohup "$sshw" >/dev/null 2>&1 &
+}
+
+wait_for_sshd() {
+  local n=0 ip=
+  while (( n < 30 )); do
+    ip=$(tailscale_ip 2>/dev/null || true)
+    if valid_listen_ip "$ip" && sshd_listening "$ip"; then
+      if ss -lnt 2>/dev/null | grep -qE "0\\.0\\.0\\.0:${SSH_PORT}\\b|\\*:${SSH_PORT}\\b"; then
+        echo "ERROR: sshd is listening on a wildcard address port ${SSH_PORT}" >&2
+        return 1
+      fi
+      echo "ssh: listening on ${ip}:${SSH_PORT}"
+      return 0
+    fi
+    sleep 1
+    n=$((n + 1))
+  done
+  echo "ERROR: sshd not listening on Tailscale IPv4:${SSH_PORT}" >&2
+  if [[ -f "$REPO/units/sshd-watchdog.log" ]]; then
+    echo "ssh: last sshd-watchdog log lines:" >&2
+    tail -n 20 "$REPO/units/sshd-watchdog.log" >&2 || true
+  fi
+  return 1
+}
+
 echo "repo=$REPO"
+
+# Chrome's apt source can block the first update. Disable it before any apt call.
+disable_hanging_chrome_apt_sources
 
 snapshot_ssh_host_keys
 ensure_tailscale_apt_repo
@@ -522,6 +600,7 @@ while read -r pkg; do
   ensure_pkg "$pkg"
 done < "$REPO/packages.txt"
 
+ensure_python3
 ensure_ssh_host_keys
 
 if [[ "${1:-}" == "--install-only" ]]; then
@@ -551,10 +630,23 @@ else
   fi
 fi
 
+reclaim_magicdns_if_needed
+
 ensure_ssh_authorized_key
 ensure_tailscaled
-ensure_sshd
+start_watchdogs
+if ! wait_for_sshd; then
+  echo "ssh: keep-alive has not bound sshd yet; starting it once" >&2
+  ensure_sshd
+fi
 
 ts_ip=""
 ts_ip=$(tailscale_ip) || ts_ip=""
+if ss -lnt 2>/dev/null | grep -qE "0\\.0\\.0\\.0:${SSH_PORT}\\b|\\*:${SSH_PORT}\\b|\\[::\\]:${SSH_PORT}\\b"; then
+  echo "ERROR: sshd is listening on a wildcard address port ${SSH_PORT}; refusing to leave it up." >&2
+  exit 1
+fi
 report_ssh_host_keys "$ts_ip"
+if [[ -n "$ts_ip" ]]; then
+  echo "ssh: ready — ssh -p ${SSH_PORT} box@${ts_ip} (MagicDNS hostname ${TS_HOSTNAME})"
+fi
