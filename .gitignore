@@ -4,6 +4,7 @@
 __pycache__/
 .env
 .env.*
+secrets.env
 *.pem
 *.key
 id_rsa
