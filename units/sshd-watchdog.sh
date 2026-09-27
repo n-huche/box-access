@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Keep sshd on <tailscale-ipv4>:2222 only. Never 0.0.0.0.
+# Keep sshd on <tailscale-ipv4>:2222 only. Never 0.0.0.0, *, or [::] on that port.
+# Port 22 is out of scope: the ss query is sport = :$SSH_PORT, so a package
+# sshd on 0.0.0.0:22 is left alone.
 # Restart when that IPv4 changes. Vendored into box-access.
 
 set -u
@@ -21,6 +23,7 @@ log() {
 }
 
 # Print sshd pids listening on SSH_PORT whose local address is not $1.
+# Port 22 is not queried and is not killed.
 # BOX_ACCESS_SS_TEXT, when set, replaces `ss` output (tests only).
 sshd_pids_except() {
   local keep=$1
