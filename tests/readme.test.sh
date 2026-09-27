@@ -27,13 +27,33 @@ need "$readme" "units/sshd-watchdog.sh"
 need "$readme" "2222"
 need "$readme" "ssh-keygen -R"
 need "$readme" "Tailscale IPv4"
-need "$entry" "reclaim_magicdns_if_needed"
-need "$entry" "start_watchdogs"
-need "$entry" "disable_hanging_chrome_apt_sources"
-need "$entry" "prepare_purge_self_markers"
-need "$entry" "./up.sh"
+need "$readme" "--install-only"
+need "$readme" "--no-watchdogs"
+need "$readme" "steps/01-packages.sh"
+need "$readme" "steps/09-watchdogs.sh"
+need "$readme" "lib/common.sh"
+need "$entry" "lib/common.sh"
+need "$entry" "steps/01-packages.sh"
+need "$entry" "steps/02-secrets.sh"
+need "$entry" "steps/04-purge.sh"
+need "$entry" "steps/06-magicdns.sh"
+need "$entry" "steps/08-sshd.sh"
+need "$entry" "steps/09-watchdogs.sh"
+need "$entry" "--install-only"
+need "$entry" "--no-watchdogs"
+need "$ROOT/lib/common.sh" "load_secrets"
+need "$ROOT/steps/01-packages.sh" "disable_hanging_chrome_apt_sources"
+need "$ROOT/steps/04-purge.sh" "prepare_purge_self_markers"
+need "$ROOT/steps/05-auth.sh" "./up.sh"
+need "$ROOT/steps/06-magicdns.sh" "reclaim_magicdns_if_needed"
+need "$ROOT/steps/08-sshd.sh" "ListenAddress="
+need "$ROOT/steps/09-watchdogs.sh" "tailscale-watchdog.sh"
 need "$wrapper" 'exec'
 need "$wrapper" 'up.sh'
+if grep -q 'authkey' "$entry"; then
+  echo "FAIL up.sh should only orchestrate; authkey lives in steps/05-auth.sh"
+  exit 1
+fi
 if grep -q 'tailscale up' "$wrapper"; then
   echo "FAIL bootstrap.sh is not a thin wrapper"
   exit 1

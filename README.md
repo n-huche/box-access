@@ -10,14 +10,26 @@ Identity stays: hostname **`cursor`**, SSH user **`box`**, port **2222**, listen
 
 ## Layout
 
+`up.sh` is only the orchestrator. It sources `lib/common.sh`, then each `steps/*.sh` in order. Steps share one shell, so `TS_HOSTNAME`, `TS_IP`, and the recovery reason carry forward. Each step is idempotent.
+
 ```text
-up.sh                           # install → recover → MagicDNS → sshd → watchdogs
+up.sh                           # run the steps below; honors flags
 bootstrap.sh                    # exec ./up.sh "$@"; same arguments
+lib/common.sh                   # paths, logging, secrets (never prints values)
 lib/purge-stale-hostname.sh     # API purge; skips the live node
 lib/purge_select.py             # match stale devices by hostname, keep our IPv4
 lib/magicdns-reclaim.sh         # bounce tmp → desired name when DNS is stuck
 lib/magicdns.py
 lib/apt-update.sh               # disable the hanging Chrome apt source
+steps/01-packages.sh            # Tailscale apt, openssh, chrome apt workaround
+steps/02-secrets.sh             # load secrets.env; default hostname cursor
+steps/03-tailscaled.sh          # start tailscaled; reuse state if it exists
+steps/04-purge.sh               # on recovery, delete other TS_HOSTNAME devices
+steps/05-auth.sh                # authkey, or tailscale up when only down
+steps/06-magicdns.sh            # tmp → hostname when DNS is stuck on -1
+steps/07-ssh-keys.sh            # authorized_keys, fingerprints, ssh-keygen -R
+steps/08-sshd.sh                # ListenAddress=$TS_IP:2222 only
+steps/09-watchdogs.sh           # start units/tailscale-watchdog.sh and sshd
 packages.txt                    # openssh-server, tailscale
 units/tailscale-watchdog.sh     # restart tailscaled only when state already exists
 units/sshd-watchdog.sh          # sshd on the current Tailscale IPv4:2222
@@ -42,26 +54,35 @@ ssh -p 2222 box@cursor
 ssh -p 2222 box@<tailscale-ipv4>
 ```
 
-Packages, host keys, and the Chrome apt workaround only (no auth, no sshd, no watchdogs):
+Packages, the Chrome apt workaround, and SSH host-key fingerprints only (no auth, no sshd, no watchdogs):
 
 ```bash
 ./up.sh --install-only
 ```
 
+Full path without the keep-alive loops (`sshd` still listens on the Tailscale IPv4):
+
+```bash
+./up.sh --no-watchdogs
+```
+
+Flags can be combined. `./bootstrap.sh` forwards them unchanged.
+
 Re-run `./up.sh` after reboot or Update. The watchdogs then keep `tailscaled` and `sshd` up if either process crashes. They are not systemd units. A reboot stops the loops until `up.sh` starts them again.
 
 ## What one run does
 
-1. Disable Google Chrome apt sources that hang `apt-get update` (see below).
-2. Add the official Tailscale apt repo for the current Debian/Ubuntu suite, then install `openssh-server` and `tailscale`. Install `curl` or `python3` only if they are missing.
-3. Ensure SSH host keys exist. If they were created or regenerated, print fingerprints and the client `ssh-keygen -R` commands.
-4. Load `/home/box/.config/box-access/secrets.env` (`TS_API_KEY`, `TS_AUTHKEY`, `TS_HOSTNAME`, default hostname `cursor`).
-5. Start `tailscaled`. An existing `/var/lib/tailscale/tailscaled.state` is reused. A missing state file means recovery, not a silent new node.
-6. **Recovery** when state is missing, the session is `NeedsLogin` / logged out, or there is no Tailscale IPv4 and the session is dead. A logged-in session that is only down (`Stopped`) is `tailscale up` without a new auth key.
-7. On recovery, **purge** devices whose hostname equals `TS_HOSTNAME`, except this machine's live node, then `tailscale up --authkey --hostname`. If the auth key fails on a TTY, `up.sh` starts interactive `tailscale up` and prints the browser URL.
-8. **MagicDNS reclaim** when the hostname is right but the DNS name is still `cursor-1` (see below).
-9. Ensure `/home/box/.ssh/authorized_keys`.
-10. Start the tailscaled and sshd watchdogs. `sshd` listens only on `<tailscale-ipv4>:2222`.
+`--install-only` runs step 01 and stops. `--no-watchdogs` skips step 09. Otherwise:
+
+1. **`01-packages.sh`** — Disable Google Chrome apt sources that hang `apt-get update` (see below). Add the official Tailscale apt repo for the current Debian/Ubuntu suite, then install `openssh-server` and `tailscale`. Install `curl` or `python3` only if they are missing. Ensure SSH host keys exist (`ssh-keygen -A`). `--install-only` prints fingerprints here and exits.
+2. **`02-secrets.sh`** — Load `/home/box/.config/box-access/secrets.env` (`TS_API_KEY`, `TS_AUTHKEY`, `TS_HOSTNAME`, default hostname `cursor`). Does not prompt. If host keys were regenerated, print fingerprints and the client `ssh-keygen -R` lines before recovery.
+3. **`03-tailscaled.sh`** — Start `tailscaled`. An existing `/var/lib/tailscale/tailscaled.state` is reused. A missing state file means recovery, not a silent new node.
+4. **`04-purge.sh`** — Only on recovery: prompt for missing keys if there is a TTY, then **purge** devices whose hostname equals `TS_HOSTNAME`, except this machine's live node (matched by Tailscale IPv4). A logged-in session skips this step.
+5. **`05-auth.sh`** — On recovery, `tailscale up --authkey --hostname`. If the auth key fails on a TTY, start interactive `tailscale up` and print the browser URL. A logged-in session that is only down (`Stopped`) is `tailscale up` without a new auth key.
+6. **`06-magicdns.sh`** — Reclaim when the hostname is right but the DNS name is still `cursor-1` (see below).
+7. **`07-ssh-keys.sh`** — Ensure `/home/box/.ssh/authorized_keys`. Print host-key fingerprints again (and `ssh-keygen -R` when keys changed this run).
+8. **`08-sshd.sh`** — `sshd` listens only on `<tailscale-ipv4>:2222` (`ListenAddress=$TS_IP`).
+9. **`09-watchdogs.sh`** — Start the tailscaled and sshd watchdogs from `units/`. Skipped with `--no-watchdogs`.
 
 ## Debian apt: Tailscale is not in the distro
 
@@ -76,7 +97,7 @@ Re-run `./up.sh` after reboot or Update. The watchdogs then keep `tailscaled` an
 
 `/etc/apt/sources.list.d/google-chrome.sources` (and sometimes `google-chrome.list`) points at `https://dl.google.com/linux/chrome...`. When that host does not answer, apt prints `Ign:` and retries until the update never finishes.
 
-On every run, before `apt-get update`, `up.sh` **renames** those files so apt ignores them:
+On every run, before `apt-get update`, `steps/01-packages.sh` **renames** those files so apt ignores them:
 
 ```text
 google-chrome.sources → google-chrome.sources.disabled-by-box-access
@@ -157,7 +178,7 @@ Logs and lock directories sit next to the unit scripts (`*.log`, `*.lock/`) and 
 
 Reinstalling `openssh-server` after a wipe regenerates host keys. Clients then fail with `REMOTE HOST IDENTIFICATION HAS CHANGED` / `Host key verification failed`.
 
-`up.sh` cannot edit the Mac's `~/.ssh/known_hosts`. When host keys are created or regenerated, it prints fingerprints (at least ED25519 SHA256) and the client commands. It always prints fingerprints at the end of a successful run.
+`up.sh` cannot edit the Mac's `~/.ssh/known_hosts`. When host keys are created or regenerated, it prints fingerprints (at least ED25519 SHA256) and the client commands before recovery, and `07-ssh-keys.sh` prints them again once the node is up. `--install-only` prints them from `01-packages.sh` and then exits.
 
 On the client:
 
