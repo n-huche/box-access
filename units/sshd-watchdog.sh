@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Keep sshd on <tailscale-ipv4>:2222 only. Never 0.0.0.0, *, or [::] on that port.
-# Port 22 is out of scope: the ss query is sport = :$SSH_PORT, so a package
-# sshd on 0.0.0.0:22 is left alone.
+# Keep port 22 closed: any sshd listening there is stopped (stop_port22_sshd).
 # Restart when that IPv4 changes. Vendored into box-access.
 
 set -u
@@ -23,7 +22,7 @@ log() {
 }
 
 # Print sshd pids listening on SSH_PORT whose local address is not $1.
-# Port 22 is not queried and is not killed.
+# Port 22 is handled by close_port22.
 # BOX_ACCESS_SS_TEXT, when set, replaces `ss` output (tests only).
 sshd_pids_except() {
   local keep=$1
@@ -60,6 +59,13 @@ stop_sshd_except() {
   if [[ "$killed" -eq 1 ]]; then
     sleep 0.3
   fi
+}
+
+close_port22() {
+  local pid
+  while IFS= read -r pid; do
+    log "stopped sshd pid=$pid on port 22"
+  done < <(stop_port22_sshd)
 }
 
 wait_for_tailscale() {
@@ -136,6 +142,7 @@ main() {
   log "watchdog start pid=$$"
 
   while true; do
+    close_port22
     ip=$(wait_for_tailscale) || {
       sleep "$backoff"
       backoff=$(( backoff * 2 ))
@@ -148,6 +155,7 @@ main() {
       log "adopting existing listener on $ip:$SSH_PORT"
       while sshd_listening "$ip"; do
         sleep 5
+        close_port22
         now=$(tailscale_ip) || now=""
         if [[ -n "$now" && "$now" != "$ip" ]]; then
           log "tailscale IPv4 changed $ip -> $now; restarting sshd"

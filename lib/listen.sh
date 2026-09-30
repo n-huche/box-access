@@ -4,7 +4,7 @@
 
 if [[ -z "${BOX_ACCESS_LISTEN_LOADED:-}" ]]; then
   BOX_ACCESS_LISTEN_LOADED=1
-  # sshd for this box. The distro listener on port 22 is a different port.
+  # sshd for this box. Port 22 stays closed (see stop_port22_sshd).
   SSH_PORT="${SSH_PORT:-2222}"
   # Shared by steps/08-sshd.sh and units/sshd-watchdog.sh.
   # 40 * 3s is about 2 minutes.
@@ -44,4 +44,26 @@ sshd_listening() {
   local ip=$1
   local esc=${ip//./\\.}
   ss -lnt 2>/dev/null | grep -qE "${esc}:${SSH_PORT}\\b"
+}
+
+# Print pids of sshd listening on port 22, any address.
+# BOX_ACCESS_SS22_TEXT, when set, replaces `ss` output (tests only).
+port22_sshd_pids() {
+  local ss_text="${BOX_ACCESS_SS22_TEXT-}"
+  if [[ -z "$ss_text" ]]; then
+    ss_text=$(sudo ss -lptn 'sport = :22' 2>/dev/null || true)
+  fi
+  grep -E ':22[[:space:]]' <<<"$ss_text" | grep -F '"sshd"' \
+    | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u || true
+}
+
+# This box is reached on <tailscale-ipv4>:$SSH_PORT only: stop any sshd on
+# port 22 (a package sshd listens on 0.0.0.0:22). Prints each stopped pid.
+stop_port22_sshd() {
+  local pid
+  while IFS= read -r pid; do
+    [[ -n "$pid" ]] || continue
+    sudo kill "$pid" 2>/dev/null || true
+    printf '%s\n' "$pid"
+  done < <(port22_sshd_pids)
 }

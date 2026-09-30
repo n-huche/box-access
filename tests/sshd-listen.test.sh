@@ -46,5 +46,24 @@ if [[ "$got" != $'222\n333' ]]; then
 fi
 echo "ok foreign port-2222 sshd pids exclude the live tailscale ip and port 22"
 
+export BOX_ACCESS_SS22_TEXT=$'State Recv-Q Send-Q Local Address:Port Peer Address:Port Process\nLISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:(("sshd",pid=444,fd=6))\nLISTEN 0 128 [::]:22 [::]:* users:(("sshd",pid=444,fd=7))\nLISTEN 0 128 100.64.0.8:2222 0.0.0.0:* users:(("sshd",pid=111,fd=3))\nLISTEN 0 128 127.0.0.1:22 0.0.0.0:* users:(("dropbear",pid=555,fd=3))'
+got=$(port22_sshd_pids)
+if [[ "$got" != "444" ]]; then
+  echo "FAIL port 22 sshd pids: $(printf %q "$got")"
+  exit 1
+fi
+BOX_ACCESS_SS22_TEXT=$'State Recv-Q Send-Q Local Address:Port Peer Address:Port Process'
+got=$(port22_sshd_pids)
+if [[ -n "$got" ]]; then
+  echo "FAIL port 22 closed but got pids: $(printf %q "$got")"
+  exit 1
+fi
+unset BOX_ACCESS_SS22_TEXT
+if ! grep -q 'close_port22' "$ROOT/steps/08-sshd.sh" || ! grep -q 'close_port22' "$ROOT/units/sshd-watchdog.sh"; then
+  echo "FAIL step 08 and the sshd watchdog must both close port 22"
+  exit 1
+fi
+echo "ok port 22 sshd pids are found once and never include port 2222"
+
 # Sourcing the unit must not enter the keep-alive loop.
 echo "ok sourcing sshd watchdog did not start the loop"
