@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # sshd on the Tailscale IPv4 only, port 2222. Never 0.0.0.0, *, or [::] on that port.
-# The package sshd on port 22 (often 0.0.0.0:22) is left alone on purpose.
+# Port 22 is closed: a package sshd there (often 0.0.0.0:22) is stopped.
 # Sets TS_IP. Watchdogs (09) adopt this listener; they are not required to bind it.
-# SSH_PORT, tailscale_ip, valid_listen_ip, and sshd_listening come from lib/listen.sh.
+# SSH_PORT, tailscale_ip, valid_listen_ip, sshd_listening, and stop_port22_sshd
+# come from lib/listen.sh.
 
 # shellcheck source=../lib/listen.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/listen.sh"
@@ -45,7 +46,14 @@ ensure_sshd() {
   return 0
 }
 
-# Wildcard check is port 2222 only. Do not stop a distro sshd on port 22.
+close_port22() {
+  local pid
+  while IFS= read -r pid; do
+    echo "ssh: stopped sshd pid=$pid on port 22"
+  done < <(stop_port22_sshd)
+}
+
+# Wildcard check is port 2222 only; port 22 is closed by close_port22.
 assert_no_wildcard_sshd() {
   if ss -lnt 2>/dev/null | grep -qE "0\\.0\\.0\\.0:${SSH_PORT}\\b|\\*:${SSH_PORT}\\b|\\[::\\]:${SSH_PORT}\\b"; then
     echo "ERROR: sshd is listening on a wildcard address port ${SSH_PORT}; refusing to leave it up." >&2
@@ -60,6 +68,7 @@ step_sshd() {
   fi
   ensure_tailscaled
   ensure_sshd
+  close_port22
   assert_no_wildcard_sshd
   export TS_IP
 }
