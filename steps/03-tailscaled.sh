@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Start tailscaled. Reuse /var/lib/tailscale when the state file exists.
 # A missing state file is recovery (05-auth.sh), not a new identity from this step.
+# A process that is up but not BackendState=Running with its own IPv4 is
+# restarted on the same state. That bounce does not auth and does not mint
+# a node; purge and tailscale up still run afterwards.
 
 tailscale_backend_state() {
   sudo tailscale status --json 2>/dev/null | python3 -c '
@@ -76,17 +79,58 @@ tailscale_needs_recovery() {
   return 0
 }
 
-ensure_tailscaled() {
+# Stop the current daemon so it can be started again on the same state file.
+# Does not delete STATE and does not log the node out.
+stop_tailscaled() {
+  local pid n=0
+  while read -r pid; do
+    [[ -n "$pid" ]] || continue
+    sudo kill "$pid" 2>/dev/null || true
+  done < <(pgrep -x tailscaled || true)
+
+  while pgrep -x tailscaled >/dev/null 2>&1; do
+    sleep 0.2
+    n=$((n + 1))
+    if (( n > 25 )); then
+      while read -r pid; do
+        [[ -n "$pid" ]] || continue
+        sudo kill -9 "$pid" 2>/dev/null || true
+      done < <(pgrep -x tailscaled || true)
+      sleep 0.2
+      break
+    fi
+  done
+
   if pgrep -x tailscaled >/dev/null 2>&1; then
-    echo "tailscale: tailscaled already running"
-    return 0
+    echo "ERROR: tailscaled did not exit; not starting a second copy" >&2
+    return 1
+  fi
+  if sudo test -S "$SOCKET" || sudo test -e "$SOCKET"; then
+    sudo rm -f "$SOCKET"
+  fi
+}
+
+ensure_tailscaled() {
+  local restart=0 backend=""
+  if pgrep -x tailscaled >/dev/null 2>&1; then
+    backend=$(tailscale_backend_state)
+    # Healthy means the map is up: Running, and this node has an IPv4.
+    if [[ "$backend" == "Running" ]] && tailscale_ip >/dev/null 2>&1; then
+      echo "tailscale: tailscaled already running"
+      return 0
+    fi
+    restart=1
   fi
   if [[ ! -x "$TAILSCALED" ]]; then
     echo "ERROR: missing $TAILSCALED" >&2
     return 1
   fi
 
-  if [[ -f "$STATE" ]] || sudo test -f "$STATE"; then
+  if [[ "$restart" -eq 1 ]]; then
+    # Same STATE / STATEDIR / SOCKET. No authkey and no new identity here.
+    echo "tailscale: tailscaled running but unhealthy (BackendState=${backend:-unknown}); restarting (reusing $STATE)"
+    stop_tailscaled || return 1
+  elif [[ -f "$STATE" ]] || sudo test -f "$STATE"; then
     echo "tailscale: starting tailscaled (reusing $STATE)"
   else
     echo "tailscale: starting tailscaled so recovery can authenticate (no state file yet)"
