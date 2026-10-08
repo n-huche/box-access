@@ -19,6 +19,7 @@ up.sh                           # run the steps below; honors flags
 bootstrap.sh                    # exec ./up.sh "$@"; same arguments
 lib/common.sh                   # paths, logging, secrets (never prints values)
 lib/listen.sh                   # SSH_PORT, tailscale_ip, valid_listen_ip
+lib/tailscale-health.sh         # Running + IPv4 + Self.Online
 lib/purge-stale-hostname.sh     # API purge; skips the live node
 lib/purge_select.py             # match stale devices by hostname, keep our IPv4
 lib/magicdns-reclaim.sh         # bounce tmp → desired name when DNS is stuck
@@ -34,7 +35,7 @@ steps/07-ssh-keys.sh            # authorized_keys, fingerprints, ssh-keygen -R
 steps/08-sshd.sh                # ListenAddress=$TS_IP:2222 only
 steps/09-watchdogs.sh           # start units/tailscale-watchdog.sh and sshd
 packages.txt                    # openssh-server, tailscale
-units/tailscale-watchdog.sh     # restart tailscaled only when state already exists
+units/tailscale-watchdog.sh     # restart tailscaled when down or unhealthy
 units/sshd-watchdog.sh          # sshd on the current Tailscale IPv4:2222
 ```
 
@@ -79,7 +80,7 @@ There is no systemd. After an Update or reboot the watchdogs are dead: from the 
 
 1. **`01-packages.sh`** — Disable Google Chrome apt sources that hang `apt-get update` (see below). Add the official Tailscale apt repo for the current Debian/Ubuntu suite, then install `openssh-server` and `tailscale`. Install `curl` or `python3` only if they are missing. Ensure SSH host keys exist (`ssh-keygen -A`). `--install-only` prints fingerprints here and exits.
 2. **`02-secrets.sh`** — Load `/home/box/.config/box-access/secrets.env` (`TS_API_KEY`, `TS_AUTHKEY`, `TS_HOSTNAME`, default hostname `cursor`). Does not prompt. If host keys were regenerated, print fingerprints and the client `ssh-keygen -R` lines before recovery.
-3. **`03-tailscaled.sh`** — Start `tailscaled`. An existing `/var/lib/tailscale/tailscaled.state` is reused. A missing state file means recovery, not a silent new node.
+3. **`03-tailscaled.sh`** — Start `tailscaled`. An existing `/var/lib/tailscale/tailscaled.state` is reused. A missing state file means recovery, not a silent new node. If the process is already up but unhealthy (not Running, no IPv4, or `Self.Online` still false on a second read), restart it on that same state file without an authkey.
 4. **`04-purge.sh`** — Only on recovery: prompt for missing keys if there is a TTY, then **purge** devices whose hostname equals `TS_HOSTNAME`, except this machine's live node (matched by Tailscale IPv4). A logged-in session skips this step.
 5. **`05-auth.sh`** — On recovery, `tailscale up --authkey --hostname`. If the auth key fails on a TTY, start interactive `tailscale up` and print the browser URL. A logged-in session that is only down (`Stopped`) is `tailscale up` without a new auth key.
 6. **`06-magicdns.sh`** — Reclaim when the hostname is right but the DNS name is still `cursor-1` (see below).
@@ -172,7 +173,7 @@ Setting the desired hostname alone did not clear the sticky label. The `tmp` hop
 
 | Unit | Behavior |
 |---|---|
-| `units/tailscale-watchdog.sh` | Loop. If `tailscaled` is down, start `/usr/sbin/tailscaled -state=/var/lib/tailscale/tailscaled.state -statedir=/var/lib/tailscale -socket=/run/tailscale/tailscaled.sock`. Requires the state file (does not create an identity). `flock` so only one loop runs. Exponential backoff (5s–60s) when the binary or the state file is missing. |
+| `units/tailscale-watchdog.sh` | Loop. If `tailscaled` is down, start `/usr/sbin/tailscaled -state=/var/lib/tailscale/tailscaled.state -statedir=/var/lib/tailscale -socket=/run/tailscale/tailscaled.sock`. Requires the state file (does not create an identity). If it is up but unhealthy (not Running, no IPv4, or `Self.Online` false on two reads about 30s apart), restart after 3 bad reads and at most once per 10 minutes. `flock` so only one loop runs. Exponential backoff (5s–60s) when the binary or the state file is missing. |
 | `units/sshd-watchdog.sh` | Wait for a Tailscale IPv4, then `sshd -D -e -p 2222 -o ListenAddress=<that-ip>`. Restart if that process dies or the Tailscale IPv4 changes. Refuse `0.0.0.0` and any listener on port 2222 that is not the current Tailscale IPv4. Stop any sshd that listens on port 22 (checked every 5s). |
 
 Logs and lock directories sit next to the unit scripts (`*.log`, `*.lock/`) and are gitignored. Cron and AOS are not started.

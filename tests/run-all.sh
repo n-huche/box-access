@@ -7,6 +7,7 @@ bash -n up.sh
 bash -n bootstrap.sh
 bash -n lib/common.sh
 bash -n lib/listen.sh
+bash -n lib/tailscale-health.sh
 bash -n lib/apt-update.sh
 bash -n lib/purge-stale-hostname.sh
 bash -n lib/magicdns-reclaim.sh

@@ -1,5 +1,6 @@
 *.log
 *.lock/
+tailscale-watchdog.cooldown
 .DS_Store
 __pycache__/
 .env

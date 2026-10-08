@@ -33,6 +33,8 @@ box_access_set_paths
 
 # shellcheck source=listen.sh
 source "$BOX_LIB_DIR/listen.sh"
+# shellcheck source=tailscale-health.sh
+source "$BOX_LIB_DIR/tailscale-health.sh"
 # shellcheck source=apt-update.sh
 source "$BOX_LIB_DIR/apt-update.sh"
 # shellcheck source=purge-stale-hostname.sh

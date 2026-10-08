@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Start tailscaled. Reuse /var/lib/tailscale when the state file exists.
 # A missing state file is recovery (05-auth.sh), not a new identity from this step.
-# A process that is up but not BackendState=Running with its own IPv4 is
-# restarted on the same state. That bounce does not auth and does not mint
-# a node; purge and tailscale up still run afterwards.
+# A process that is up but unhealthy (not Running, no IPv4, or Self.Online
+# still false after a second read) is restarted on the same state. That bounce
+# does not auth and does not mint a node; purge and tailscale up still run afterwards.
 
 tailscale_backend_state() {
   sudo tailscale status --json 2>/dev/null | python3 -c '
@@ -111,11 +111,9 @@ stop_tailscaled() {
 }
 
 ensure_tailscaled() {
-  local restart=0 backend=""
+  local restart=0
   if pgrep -x tailscaled >/dev/null 2>&1; then
-    backend=$(tailscale_backend_state)
-    # Healthy means the map is up: Running, and this node has an IPv4.
-    if [[ "$backend" == "Running" ]] && tailscale_ip >/dev/null 2>&1; then
+    if tailscale_healthy; then
       echo "tailscale: tailscaled already running"
       return 0
     fi
@@ -128,7 +126,7 @@ ensure_tailscaled() {
 
   if [[ "$restart" -eq 1 ]]; then
     # Same STATE / STATEDIR / SOCKET. No authkey and no new identity here.
-    echo "tailscale: tailscaled running but unhealthy (BackendState=${backend:-unknown}); restarting (reusing $STATE)"
+    echo "tailscale: tailscaled running but unhealthy (${TS_HEALTH_REASON:-unknown}); restarting (reusing $STATE)"
     stop_tailscaled || return 1
   elif [[ -f "$STATE" ]] || sudo test -f "$STATE"; then
     echo "tailscale: starting tailscaled (reusing $STATE)"

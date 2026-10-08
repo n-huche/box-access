@@ -1,5 +1,5 @@
 # Tailscale IPv4 and sshd listen helpers.
-# Safe to source from lib/common.sh and from units/sshd-watchdog.sh.
+# Safe to source from lib/common.sh, lib/tailscale-health.sh, and units/sshd-watchdog.sh.
 # Constants and functions only: no apt, no secrets, no `set -e`, no daemons.
 
 if [[ -z "${BOX_ACCESS_LISTEN_LOADED:-}" ]]; then
