@@ -134,11 +134,14 @@ ensure_tailscaled() {
     echo "tailscale: starting tailscaled so recovery can authenticate (no state file yet)"
   fi
   sudo mkdir -p "$STATEDIR" /run/tailscale
-  sudo setsid "$TAILSCALED" \
+  local daemon_log
+  daemon_log=$(tailscaled_prepare_daemon_log)
+  # TZ=UTC matches the watchdog log. Output is appended, not discarded.
+  sudo TZ=UTC setsid "$TAILSCALED" \
     -state="$STATE" \
     -statedir="$STATEDIR" \
     -socket="$SOCKET" \
-    >/dev/null 2>&1 &
+    >>"$daemon_log" 2>&1 &
 
   local n=0
   while ! sudo test -S "$SOCKET"; do

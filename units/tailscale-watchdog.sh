@@ -4,6 +4,10 @@
 # A live but unhealthy daemon is restarted only after TS_WATCHDOG_UNHEALTHY_READS
 # bad samples (default 3) and at most once per TS_WATCHDOG_RESTART_COOLDOWN
 # seconds (default 600). The cooldown timestamp is tailscale-watchdog.cooldown.
+# A VM pause (wall clock ahead of /proc/uptime by more than TS_RESUME_SKEW_SECS,
+# default 20) restarts immediately, ignoring that streak and cooldown, at most
+# once per TS_RESUME_MIN_INTERVAL_SECS (default 60). Daemon output goes to
+# units/tailscaled.log, not this script's log.
 # Vendored into box-access; do not call out to another repo at runtime.
 
 set -u
@@ -39,11 +43,13 @@ start_daemon() {
     return 1
   fi
   sudo mkdir -p "$STATEDIR" /run/tailscale
-  sudo setsid "$BIN" \
+  local daemon_log
+  daemon_log=$(tailscaled_prepare_daemon_log)
+  sudo TZ=UTC setsid "$BIN" \
     -state="$STATE" \
     -statedir="$STATEDIR" \
     -socket="$SOCKET" \
-    >>"$LOG" 2>&1 &
+    >>"$daemon_log" 2>&1 &
   local pid=$!
   sleep "${TS_WATCHDOG_START_WAIT:-1}"
   if is_running; then
@@ -137,6 +143,36 @@ watchdog_observe_running() {
   return 0
 }
 
+# 0 when a resume restart ran (caller skips the health sample).
+# 1 when this iteration should use the normal health rules.
+watchdog_on_resume() {
+  local interval now
+  if ! tailscale_resume_from_pause; then
+    return 1
+  fi
+  interval=${TS_RESUME_MIN_INTERVAL_SECS:-60}
+  now=$(tailscale_wall_secs)
+  if [[ -n "${TS_RESUME_LAST_RESTART:-}" ]] && (( now - TS_RESUME_LAST_RESTART < interval )); then
+    return 1
+  fi
+  log "resume detected (paused ${TS_RESUME_PAUSED}s)"
+  if ! restart_unhealthy_tailscaled; then
+    return 1
+  fi
+  TS_RESUME_LAST_RESTART=$now
+  TS_WATCHDOG_BAD_COUNT=0
+  TS_WATCHDOG_COOLDOWN_LOGGED=0
+  return 0
+}
+
+# One loop pass while tailscaled is up.
+watchdog_tick() {
+  if watchdog_on_resume; then
+    return 0
+  fi
+  watchdog_observe_running || true
+}
+
 main() {
   local backoff
   mkdir -p "$LOCK_DIR"
@@ -156,7 +192,7 @@ main() {
       TS_WATCHDOG_BAD_COUNT=0
       TS_WATCHDOG_COOLDOWN_LOGGED=0
       while is_running; do
-        watchdog_observe_running || true
+        watchdog_tick || true
         if is_running; then
           sleep 5
         fi

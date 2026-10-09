@@ -1,4 +1,5 @@
 *.log
+*.log.1
 *.lock/
 tailscale-watchdog.cooldown
 .DS_Store

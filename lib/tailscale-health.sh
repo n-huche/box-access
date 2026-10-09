@@ -4,6 +4,8 @@
 # is that gap (default 30). Not Running and a missing IPv4 fail on the first read.
 # No apt, no secrets, no daemons. On failure TS_HEALTH_REASON is one of:
 # "not Running", "no IPv4", "offline".
+# A VM pause freezes /proc/uptime while the wall clock jumps. tailscale_resume_from_pause
+# reports that skew. TS_WALL_CLOCK_FILE and TS_UPTIME_FILE override the sources.
 
 if [[ -z "${BOX_ACCESS_HEALTH_LOADED:-}" ]]; then
   BOX_ACCESS_HEALTH_LOADED=1
@@ -80,5 +82,80 @@ sys.stdout.write("%s\t%s\n" % (backend, flag))
       return 1
     fi
     return "$rc"
+  }
+
+  # Seconds. Tests point TS_WALL_CLOCK_FILE at a file containing an integer.
+  tailscale_wall_secs() {
+    local raw
+    if [[ -n "${TS_WALL_CLOCK_FILE:-}" ]]; then
+      raw=$(tr -cd '0-9' <"$TS_WALL_CLOCK_FILE" || true)
+      printf '%s\n' "${raw:-0}"
+      return
+    fi
+    date +%s
+  }
+
+  # Whole seconds from /proc/uptime. Tests point TS_UPTIME_FILE elsewhere.
+  tailscale_uptime_secs() {
+    local file raw
+    file=${TS_UPTIME_FILE:-/proc/uptime}
+    raw=$(awk '{print $1}' "$file" 2>/dev/null || true)
+    raw=${raw%%.*}
+    printf '%s\n' "${raw:-0}"
+  }
+
+  # 0 when wall clock advanced more than uptime by more than TS_RESUME_SKEW_SECS
+  # (default 20) since the previous sample. The first sample only records a baseline.
+  # Sets TS_RESUME_PAUSED to that difference in seconds.
+  tailscale_resume_from_pause() {
+    local wall up paused skew
+    wall=$(tailscale_wall_secs)
+    up=$(tailscale_uptime_secs)
+    skew=${TS_RESUME_SKEW_SECS:-20}
+    if [[ -z "${TS_RESUME_PREV_WALL:-}" || -z "${TS_RESUME_PREV_UP:-}" ]]; then
+      TS_RESUME_PREV_WALL=$wall
+      TS_RESUME_PREV_UP=$up
+      TS_RESUME_PAUSED=0
+      return 1
+    fi
+    paused=$(( (wall - TS_RESUME_PREV_WALL) - (up - TS_RESUME_PREV_UP) ))
+    TS_RESUME_PREV_WALL=$wall
+    TS_RESUME_PREV_UP=$up
+    TS_RESUME_PAUSED=$paused
+    if (( paused > skew )); then
+      return 0
+    fi
+    return 1
+  }
+
+  # One daemon log for up.sh and the watchdog. Not the watchdog's own log.
+  tailscaled_daemon_log() {
+    if [[ -n "${TS_DAEMON_LOG:-}" ]]; then
+      printf '%s\n' "$TS_DAEMON_LOG"
+      return
+    fi
+    if [[ -n "${REPO:-}" ]]; then
+      printf '%s\n' "$REPO/units/tailscaled.log"
+      return
+    fi
+    local root
+    root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+    printf '%s\n' "$root/units/tailscaled.log"
+  }
+
+  # Rotate to .1 when the log is above TS_DAEMON_LOG_MAX_BYTES (default 10 MB).
+  # Prints the path to append to.
+  tailscaled_prepare_daemon_log() {
+    local log max size
+    log=$(tailscaled_daemon_log)
+    mkdir -p -- "$(dirname "$log")"
+    max=${TS_DAEMON_LOG_MAX_BYTES:-10485760}
+    if [[ -f "$log" ]]; then
+      size=$(wc -c <"$log" | tr -d '[:space:]')
+      if [[ -n "$size" ]] && (( size > max )); then
+        mv -f -- "$log" "${log}.1"
+      fi
+    fi
+    printf '%s\n' "$log"
   }
 fi

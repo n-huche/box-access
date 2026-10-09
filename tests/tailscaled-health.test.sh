@@ -25,6 +25,8 @@ export STATE="$TMP/tailscaled.state"
 export STATEDIR="$TMP/lib"
 export SOCKET="$TMP/run/tailscaled.sock"
 export TAILSCALED="$TMP/bin/tailscaled"
+export TS_DAEMON_LOG="$TMP/tailscaled-daemon.log"
+: > "$TS_DAEMON_LOG"
 IDENTITY='existing-node-identity'
 printf '%s\n' "$IDENTITY" > "$STATE"
 
@@ -45,6 +47,10 @@ EOF
 cat > "$TMP/bin/sudo" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+while [[ "${1:-}" == *=* ]]; do
+  export "$1"
+  shift
+done
 if [[ "${1:-}" == "mkdir" ]]; then
   shift
   args=()
@@ -128,6 +134,8 @@ cat > "$TMP/bin/tailscaled" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'start %s\n' "$*" >> "${FAKE_TS_LOG:?}"
+printf 'TZ=%s\n' "${TZ:-}" >> "${FAKE_TS_LOG:?}"
+printf 'daemon-stdout\n'
 rm -f "${FAKE_TAILSCALED_DOWN:-}"
 sock=""
 for arg in "$@"; do
@@ -324,6 +332,43 @@ if (( ENSURE_SECS > 5 )); then
   exit 1
 fi
 echo "ok Online=false on both reads restarts on the same state"
+if ! grep -q 'TZ=UTC' "$FAKE_TS_LOG"; then
+  echo "FAIL tailscaled was not started with TZ=UTC"
+  cat "$FAKE_TS_LOG"
+  exit 1
+fi
+if [[ "$(grep -c 'daemon-stdout' "$TS_DAEMON_LOG")" -lt 2 ]]; then
+  echo "FAIL daemon log was not appended across starts"
+  cat "$TS_DAEMON_LOG"
+  exit 1
+fi
+if grep -n 'setsid' "$ROOT/steps/03-tailscaled.sh" | grep -q '/dev/null'; then
+  echo "FAIL ensure_tailscaled still discards daemon output"
+  exit 1
+fi
+if ! grep -q 'tailscaled_prepare_daemon_log' "$ROOT/steps/03-tailscaled.sh" \
+  || ! grep -q 'tailscaled_prepare_daemon_log' "$ROOT/units/tailscale-watchdog.sh"; then
+  echo "FAIL up.sh and the watchdog do not share the daemon log"
+  exit 1
+fi
+if ! grep -q 'TZ=UTC' "$ROOT/steps/03-tailscaled.sh" \
+  || ! grep -q 'TZ=UTC' "$ROOT/units/tailscale-watchdog.sh"; then
+  echo "FAIL daemon is not started with TZ=UTC"
+  exit 1
+fi
+echo "ok daemon log is appended for up.sh and the watchdog, not /dev/null"
+
+(
+  export TS_DAEMON_LOG="$TMP/rotate.log"
+  export TS_DAEMON_LOG_MAX_BYTES=8
+  printf '0123456789' > "$TS_DAEMON_LOG"
+  tailscaled_prepare_daemon_log >/dev/null
+  if [[ ! -f "${TS_DAEMON_LOG}.1" || -f "$TS_DAEMON_LOG" ]]; then
+    echo "FAIL daemon log above the cap was not moved to .1"
+    exit 1
+  fi
+)
+echo "ok daemon log rotates above the size cap"
 
 # One false sample then true is the startup blip: do not restart.
 export FAKE_TS_ONLINE_LIST='false true'
@@ -526,3 +571,132 @@ if (( wd_secs > 8 )); then
   exit 1
 fi
 echo "ok watchdog outside cooldown restarts once and records cooldown"
+
+if ! grep -q 'TS_RESUME_SKEW_SECS:-20' "$ROOT/lib/tailscale-health.sh"; then
+  echo "FAIL resume skew default is not 20s"
+  exit 1
+fi
+if ! grep -q 'TS_RESUME_MIN_INTERVAL_SECS:-60' "$ROOT/units/tailscale-watchdog.sh"; then
+  echo "FAIL resume interval default is not 60s"
+  exit 1
+fi
+echo "ok resume skew and interval defaults"
+
+# Clock and uptime are files so the cases do not sleep.
+resume_case() {
+  local mode=$1
+  local log="$TMP/resume-$mode.log"
+  (
+    export TS_WATCHDOG_LOG="$log"
+    export TS_WATCHDOG_COOLDOWN_FILE="$TMP/resume-$mode.cooldown"
+    export TS_WALL_CLOCK_FILE="$TMP/resume-$mode.wall"
+    export TS_UPTIME_FILE="$TMP/resume-$mode.up"
+    export TS_RESUME_SKEW_SECS=20
+    export TS_RESUME_MIN_INTERVAL_SECS=60
+    export TS_WATCHDOG_UNHEALTHY_READS=1
+    export TS_WATCHDOG_RESTART_COOLDOWN=600
+    export TS_WATCHDOG_START_WAIT=1
+    export TS_ONLINE_CONFIRM_SECS=0
+    export FAKE_TS_BACKEND=Running
+    export FAKE_TS_ONLINE=true
+    export FAKE_TS_ONLINE_LIST=
+    : > "$FAKE_TS_LOG"
+    : > "$TS_WATCHDOG_LOG"
+    rm -f "$FAKE_TAILSCALED_DOWN" "$TS_WATCHDOG_COOLDOWN_FILE"
+    # shellcheck source=../units/tailscale-watchdog.sh
+    source "$ROOT/units/tailscale-watchdog.sh"
+    STATE=$WD_STATE
+    STATEDIR=$WD_STATEDIR
+    SOCKET=$WD_SOCKET
+    BIN=$WD_BIN
+    printf '%s\n' 1000 > "$TS_WALL_CLOCK_FILE"
+    printf '%s\n' 100 > "$TS_UPTIME_FILE"
+    case "$mode" in
+      above)
+        export FAKE_TS_IP=
+        date +%s > "$TS_WATCHDOG_COOLDOWN_FILE"
+        watchdog_tick
+        printf '%s\n' 1100 > "$TS_WALL_CLOCK_FILE"
+        watchdog_tick
+        ;;
+      below)
+        export FAKE_TS_IP=100.64.0.8
+        watchdog_tick
+        printf '%s\n' 1010 > "$TS_WALL_CLOCK_FILE"
+        watchdog_tick
+        ;;
+      twice)
+        export FAKE_TS_IP=100.64.0.8
+        watchdog_tick
+        printf '%s\n' 1100 > "$TS_WALL_CLOCK_FILE"
+        watchdog_tick
+        printf '%s\n' 1130 > "$TS_WALL_CLOCK_FILE"
+        watchdog_tick
+        ;;
+    esac
+  )
+}
+
+start_count() {
+  grep -c '^start ' "$FAKE_TS_LOG" || true
+}
+
+resume_case above
+if [[ "$(start_count)" -ne 1 ]]; then
+  echo "FAIL resume above the skew did not restart once"
+  cat "$FAKE_TS_LOG"
+  cat "$TMP/resume-above.log"
+  exit 1
+fi
+if ! grep -q 'resume detected (paused 100s)' "$TMP/resume-above.log"; then
+  echo "FAIL resume was not logged"
+  cat "$TMP/resume-above.log"
+  exit 1
+fi
+if ! grep -q 'restart skipped (cooldown)' "$TMP/resume-above.log"; then
+  echo "FAIL resume case was not inside the health cooldown"
+  cat "$TMP/resume-above.log"
+  exit 1
+fi
+if ! grep -F -q -- "-state=$WD_STATE -statedir=$WD_STATEDIR -socket=$WD_SOCKET" "$FAKE_TS_LOG"; then
+  echo "FAIL resume restart did not reuse STATE STATEDIR SOCKET"
+  cat "$FAKE_TS_LOG"
+  exit 1
+fi
+if grep -q -- '--authkey\|tailscale up' "$FAKE_TS_LOG"; then
+  echo "FAIL resume restart used an authkey or tailscale up"
+  exit 1
+fi
+if [[ "$(cat "$STATE")" != "$IDENTITY" ]]; then
+  echo "FAIL resume restart replaced the state identity"
+  exit 1
+fi
+echo "ok wall-clock jump above the skew restarts inside cooldown"
+
+resume_case below
+if [[ "$(start_count)" -ne 0 ]]; then
+  echo "FAIL jump below the skew restarted tailscaled"
+  cat "$FAKE_TS_LOG"
+  cat "$TMP/resume-below.log"
+  exit 1
+fi
+if grep -q 'resume detected' "$TMP/resume-below.log"; then
+  echo "FAIL small jump was logged as a resume"
+  cat "$TMP/resume-below.log"
+  exit 1
+fi
+echo "ok wall-clock jump below the skew does not restart"
+
+resume_case twice
+if [[ "$(start_count)" -ne 1 ]]; then
+  echo "FAIL two close jumps restarted $(start_count) times"
+  cat "$FAKE_TS_LOG"
+  cat "$TMP/resume-twice.log"
+  exit 1
+fi
+if [[ "$(grep -c 'resume detected' "$TMP/resume-twice.log")" -ne 1 ]]; then
+  echo "FAIL two close jumps logged more than one resume"
+  cat "$TMP/resume-twice.log"
+  exit 1
+fi
+echo "ok two resume jumps inside 60s produce one restart"
