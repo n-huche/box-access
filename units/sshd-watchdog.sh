@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Keep sshd on <tailscale-ipv4>:2222 only. Never 0.0.0.0, *, or [::] on that port.
 # Keep port 22 closed: any sshd listening there is stopped (stop_port22_sshd).
-# Restart when that IPv4 changes. Vendored into box-access.
+# Restart when that IPv4 changes. Do not restart sshd when tailscaled resumes.
+# -E units/sshd.log, ClientAliveInterval 60, ClientAliveCountMax 30 apply on
+# the next start only. Vendored into box-access.
 
 set -u
 
@@ -112,12 +114,17 @@ start_sshd() {
     return 1
   fi
   stop_sshd_except "$ip"
-  if ! sudo "$BIN" -t -p "$SSH_PORT" -o "ListenAddress=$ip" >/dev/null 2>&1; then
+  if ! sudo "$BIN" -t -p "$SSH_PORT" -o "ListenAddress=$ip" \
+    -o "ClientAliveInterval=60" -o "ClientAliveCountMax=30" >/dev/null 2>&1; then
     if ! sudo "$BIN" -t >/dev/null 2>&1; then
       log "WARN: sshd -t failed; trying to start anyway"
     fi
   fi
-  sudo setsid "$BIN" -D -e -p "$SSH_PORT" -o "ListenAddress=$ip" >>"$LOG" 2>&1 &
+  sudo setsid "$BIN" -D -E "$(sshd_debug_log)" -p "$SSH_PORT" \
+    -o "ListenAddress=$ip" \
+    -o "ClientAliveInterval=60" \
+    -o "ClientAliveCountMax=30" \
+    >/dev/null 2>&1 &
   local pid=$!
   sleep 1
   if sshd_listening "$ip"; then

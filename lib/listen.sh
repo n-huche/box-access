@@ -39,6 +39,18 @@ valid_listen_ip() {
   return 0
 }
 
+# sshd -E file. SSHD_DEBUG_LOG overrides it. units/sshd.log sits with the
+# other gitignored logs. A running sshd keeps this path only after it starts.
+sshd_debug_log() {
+  if [[ -n "${SSHD_DEBUG_LOG:-}" ]]; then
+    printf '%s\n' "$SSHD_DEBUG_LOG"
+    return
+  fi
+  local root
+  root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+  printf '%s\n' "$root/units/sshd.log"
+}
+
 # True when sshd is listening on $1:$SSH_PORT. Does not look at port 22.
 sshd_listening() {
   local ip=$1

@@ -5,9 +5,15 @@
 # bad samples (default 3) and at most once per TS_WATCHDOG_RESTART_COOLDOWN
 # seconds (default 600). The cooldown timestamp is tailscale-watchdog.cooldown.
 # A VM pause (wall clock ahead of /proc/uptime by more than TS_RESUME_SKEW_SECS,
-# default 20) restarts immediately, ignoring that streak and cooldown, at most
-# once per TS_RESUME_MIN_INTERVAL_SECS (default 60). Daemon output goes to
-# units/tailscaled.log, not this script's log.
+# default 20) does not restart tailscaled. It logs the pause and asks the
+# running daemon to rebind UDP (`tailscale debug rebind`) and drop DERP
+# connections (`tailscale debug break-derp-conns`). The Mac path is DERP-only,
+# so rebind is not a substitute for break-derp-conns. tailscale debug is not a
+# stable API: a missing command, a non-zero exit, or a timeout is logged and
+# the daemon stays up. Health restarts stay on the normal path
+# (TS_WATCHDOG_UNHEALTHY_READS, default 3, and TS_WATCHDOG_RESTART_COOLDOWN,
+# default 600). At most one resume action per TS_RESUME_MIN_INTERVAL_SECS
+# (default 60). Daemon output goes to units/tailscaled.log, not this script's log.
 # Vendored into box-access; do not call out to another repo at runtime.
 
 set -u
@@ -143,8 +149,23 @@ watchdog_observe_running() {
   return 0
 }
 
-# 0 when a resume restart ran (caller skips the health sample).
-# 1 when this iteration should use the normal health rules.
+# Refresh the running daemon's path. Does not restart.
+# `tailscale debug` is not a stable API. A missing command, a non-zero
+# status, or a timeout (124) is logged and the caller continues.
+watchdog_debug_action() {
+  local sub=$1 rc=0
+  timeout 5 sudo tailscale --socket="$SOCKET" debug "$sub" || rc=$?
+  if [[ "$rc" -eq 0 ]]; then
+    log "resume: tailscale debug $sub ok"
+    return 0
+  fi
+  log "resume: tailscale debug $sub failed (exit $rc); not restarting"
+  return 0
+}
+
+# 1 always. A detected resume never skips the health sample: the tick
+# falls through to watchdog_observe_running (streak + cooldown).
+# TS_RESUME_LAST_RESTART marks the last resume action, not a daemon restart.
 watchdog_on_resume() {
   local interval now
   if ! tailscale_resume_from_pause; then
@@ -156,20 +177,19 @@ watchdog_on_resume() {
     return 1
   fi
   log "resume detected (paused ${TS_RESUME_PAUSED}s)"
-  if ! restart_unhealthy_tailscaled; then
-    return 1
-  fi
   TS_RESUME_LAST_RESTART=$now
+  # rebind is UDP-only (tailscale 1.104.1: "Force a magicsock rebind").
+  # The peer path is DERP, so break-derp-conns still runs when rebind fails.
+  watchdog_debug_action rebind
+  watchdog_debug_action break-derp-conns
   TS_WATCHDOG_BAD_COUNT=0
   TS_WATCHDOG_COOLDOWN_LOGGED=0
-  return 0
+  return 1
 }
 
 # One loop pass while tailscaled is up.
 watchdog_tick() {
-  if watchdog_on_resume; then
-    return 0
-  fi
+  watchdog_on_resume || true
   watchdog_observe_running || true
 }
 

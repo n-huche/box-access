@@ -36,7 +36,13 @@ ensure_sshd() {
     return 1
   fi
   echo "ssh: starting sshd ListenAddress=$TS_IP:$SSH_PORT"
-  sudo setsid "$SSHD" -D -e -p "$SSH_PORT" -o "ListenAddress=$TS_IP" >/dev/null 2>&1 &
+  # -E and ClientAlive apply on this start. An already-running sshd is left
+  # alone (the watchdog adopts it and does not restart on a Tailscale resume).
+  sudo setsid "$SSHD" -D -E "$(sshd_debug_log)" -p "$SSH_PORT" \
+    -o "ListenAddress=$TS_IP" \
+    -o "ClientAliveInterval=60" \
+    -o "ClientAliveCountMax=30" \
+    >/dev/null 2>&1 &
   sleep 1
   if sshd_listening "$TS_IP"; then
     echo "ssh: listening on $TS_IP:$SSH_PORT"
