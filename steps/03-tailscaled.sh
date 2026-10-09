@@ -141,7 +141,7 @@ ensure_tailscaled() {
     -state="$STATE" \
     -statedir="$STATEDIR" \
     -socket="$SOCKET" \
-    >>"$daemon_log" 2>&1 &
+    >>"$daemon_log" 2>&1 9>&- &
 
   local n=0
   while ! sudo test -S "$SOCKET"; do

@@ -36,7 +36,7 @@ log() {
 }
 
 is_running() {
-  pgrep -x tailscaled >/dev/null 2>&1
+  pgrep -x tailscaled >/dev/null 2>&1 9>&-
 }
 
 start_daemon() {
@@ -51,13 +51,14 @@ start_daemon() {
   sudo mkdir -p "$STATEDIR" /run/tailscale
   local daemon_log
   daemon_log=$(tailscaled_prepare_daemon_log)
+  # 9>&- so sudo/setsid/tailscaled do not inherit the watchdog lock.
   sudo TZ=UTC setsid "$BIN" \
     -state="$STATE" \
     -statedir="$STATEDIR" \
     -socket="$SOCKET" \
-    >>"$daemon_log" 2>&1 &
+    >>"$daemon_log" 2>&1 9>&- &
   local pid=$!
-  sleep "${TS_WATCHDOG_START_WAIT:-1}"
+  sleep "${TS_WATCHDOG_START_WAIT:-1}" 9>&-
   if is_running; then
     log "started tailscaled (spawn_pid=$pid real=$(pgrep -x tailscaled | tr '\n' ' '))"
     return 0
@@ -94,17 +95,17 @@ restart_unhealthy_tailscaled() {
   while read -r pid; do
     [[ -n "$pid" ]] || continue
     sudo kill "$pid" 2>/dev/null || true
-  done < <(pgrep -x tailscaled || true)
+  done < <(pgrep -x tailscaled 9>&- || true)
 
   while is_running; do
-    sleep 0.2
+    sleep 0.2 9>&-
     n=$((n + 1))
     if (( n > 25 )); then
       while read -r pid; do
         [[ -n "$pid" ]] || continue
         sudo kill -9 "$pid" 2>/dev/null || true
-      done < <(pgrep -x tailscaled || true)
-      sleep 0.2
+      done < <(pgrep -x tailscaled 9>&- || true)
+      sleep 0.2 9>&-
       break
     fi
   done
@@ -154,7 +155,7 @@ watchdog_observe_running() {
 # status, or a timeout (124) is logged and the caller continues.
 watchdog_debug_action() {
   local sub=$1 rc=0
-  timeout 5 sudo tailscale --socket="$SOCKET" debug "$sub" || rc=$?
+  timeout 5 sudo tailscale --socket="$SOCKET" debug "$sub" 9>&- || rc=$?
   if [[ "$rc" -eq 0 ]]; then
     log "resume: tailscale debug $sub ok"
     return 0
@@ -195,13 +196,7 @@ watchdog_tick() {
 
 main() {
   local backoff
-  mkdir -p "$LOCK_DIR"
-  exec 9>"$LOCK_DIR/pid"
-  if ! flock -n 9; then
-    echo "tailscale-watchdog already running" >&2
-    exit 0
-  fi
-  echo $$ >&9
+  watchdog_acquire_lock "$(basename "$0")" || exit 0
 
   backoff=$MIN_BACKOFF
   log "watchdog start pid=$$"
@@ -214,7 +209,7 @@ main() {
       while is_running; do
         watchdog_tick || true
         if is_running; then
-          sleep 5
+          sleep 5 9>&-
         fi
       done
       log "tailscaled exited; will restart"
@@ -226,7 +221,7 @@ main() {
         continue
       fi
       log "start failed; sleep ${backoff}s"
-      sleep "$backoff"
+      sleep "$backoff" 9>&-
       backoff=$(( backoff * 2 ))
       if (( backoff > MAX_BACKOFF )); then backoff=$MAX_BACKOFF; fi
     fi

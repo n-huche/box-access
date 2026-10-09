@@ -59,7 +59,7 @@ stop_sshd_except() {
     killed=1
   done < <(sshd_pids_except "$keep")
   if [[ "$killed" -eq 1 ]]; then
-    sleep 0.3
+    sleep 0.3 9>&-
   fi
 }
 
@@ -72,9 +72,9 @@ close_port22() {
 
 wait_for_tailscale() {
   local n=0
-  while ! pgrep -x tailscaled >/dev/null 2>&1; do
+  while ! pgrep -x tailscaled >/dev/null 2>&1 9>&-; do
     log "waiting for tailscaled..."
-    sleep "$SSH_IPV4_WAIT_INTERVAL"
+    sleep "$SSH_IPV4_WAIT_INTERVAL" 9>&-
     n=$((n + 1))
     if (( n >= SSH_IPV4_WAIT_TRIES )); then
       log "ERROR: tailscaled still down after wait"
@@ -94,7 +94,7 @@ wait_for_tailscale() {
     else
       log "waiting for tailscale0 address (got=${ip:-none})..."
     fi
-    sleep "$SSH_IPV4_WAIT_INTERVAL"
+    sleep "$SSH_IPV4_WAIT_INTERVAL" 9>&-
     n=$((n + 1))
     if (( n >= SSH_IPV4_WAIT_TRIES )); then
       log "ERROR: no tailscale IP yet"
@@ -120,13 +120,14 @@ start_sshd() {
       log "WARN: sshd -t failed; trying to start anyway"
     fi
   fi
+  # 9>&- so sudo/setsid/sshd do not inherit the watchdog lock.
   sudo setsid "$BIN" -D -E "$(sshd_debug_log)" -p "$SSH_PORT" \
     -o "ListenAddress=$ip" \
     -o "ClientAliveInterval=60" \
     -o "ClientAliveCountMax=30" \
-    >/dev/null 2>&1 &
+    >/dev/null 2>&1 9>&- &
   local pid=$!
-  sleep 1
+  sleep 1 9>&-
   if sshd_listening "$ip"; then
     log "started sshd ListenAddress=$ip:$SSH_PORT (spawn_pid=$pid)"
     return 0
@@ -137,13 +138,7 @@ start_sshd() {
 
 main() {
   local backoff ip now
-  mkdir -p "$LOCK_DIR"
-  exec 9>"$LOCK_DIR/pid"
-  if ! flock -n 9; then
-    echo "sshd-watchdog already running" >&2
-    exit 0
-  fi
-  echo $$ >&9
+  watchdog_acquire_lock "$(basename "$0")" || exit 0
 
   backoff=$MIN_BACKOFF
   log "watchdog start pid=$$"
@@ -151,7 +146,7 @@ main() {
   while true; do
     close_port22
     ip=$(wait_for_tailscale) || {
-      sleep "$backoff"
+      sleep "$backoff" 9>&-
       backoff=$(( backoff * 2 ))
       if (( backoff > MAX_BACKOFF )); then backoff=$MAX_BACKOFF; fi
       continue
@@ -161,7 +156,7 @@ main() {
       backoff=$MIN_BACKOFF
       log "adopting existing listener on $ip:$SSH_PORT"
       while sshd_listening "$ip"; do
-        sleep 5
+        sleep 5 9>&-
         close_port22
         now=$(tailscale_ip) || now=""
         if [[ -n "$now" && "$now" != "$ip" ]]; then
@@ -182,7 +177,7 @@ main() {
       continue
     fi
     log "start failed; sleep ${backoff}s"
-    sleep "$backoff"
+    sleep "$backoff" 9>&-
     backoff=$(( backoff * 2 ))
     if (( backoff > MAX_BACKOFF )); then backoff=$MAX_BACKOFF; fi
   done

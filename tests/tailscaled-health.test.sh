@@ -151,6 +151,13 @@ set -euo pipefail
 printf 'start %s\n' "$*" >> "${FAKE_TS_LOG:?}"
 printf 'TZ=%s\n' "${TZ:-}" >> "${FAKE_TS_LOG:?}"
 printf 'daemon-stdout\n'
+if [[ -n "${FAKE_TS_FD9_FILE:-}" ]]; then
+  if [[ -e /dev/fd/9 ]]; then
+    printf 'open\n' > "$FAKE_TS_FD9_FILE"
+  else
+    printf 'closed\n' > "$FAKE_TS_FD9_FILE"
+  fi
+fi
 rm -f "${FAKE_TAILSCALED_DOWN:-}"
 sock=""
 for arg in "$@"; do
@@ -171,6 +178,10 @@ s = socket.socket(socket.AF_UNIX)
 s.bind(p)
 s.close()
 ' "$sock"
+if [[ -n "${FAKE_TS_SLEEP:-}" ]]; then
+  printf '%s\n' "$$" > "${FAKE_TS_STARTED:?}"
+  sleep "$FAKE_TS_SLEEP"
+fi
 EOF
 
 chmod 755 "$TMP/bin/pgrep" "$TMP/bin/sudo" "$TMP/bin/tailscale" "$TMP/bin/ip" "$TMP/bin/tailscaled"
@@ -836,3 +847,212 @@ if ! grep -q 'restart skipped (cooldown)' "$TMP/resume-unhealthy-cooldown.log"; 
   exit 1
 fi
 echo "ok three bad reads after resume respect cooldown"
+
+for unit in "$ROOT/units/tailscale-watchdog.sh" "$ROOT/units/sshd-watchdog.sh"; do
+  if grep -E '^[[:space:]]*sleep ' "$unit" | grep -v '9>&-' >/dev/null; then
+    echo "FAIL sleep in ${unit#"$ROOT"/} inherits the lock fd"
+    grep -E '^[[:space:]]*sleep ' "$unit" | grep -v '9>&-'
+    exit 1
+  fi
+done
+if ! grep -q '9>&-' "$ROOT/units/tailscale-watchdog.sh" \
+  || ! grep -q '9>&-' "$ROOT/units/sshd-watchdog.sh" \
+  || ! grep -q '9>&-' "$ROOT/steps/03-tailscaled.sh" \
+  || ! grep -q '9>&-' "$ROOT/steps/08-sshd.sh"; then
+  echo "FAIL a daemon start does not close the lock fd"
+  exit 1
+fi
+echo "ok daemon starts and sleeps drop the lock fd"
+
+# The daemon is started while fd 9 holds the watchdog flock. It must not
+# inherit that fd, or the next watchdog sees "already running" after this one exits.
+(
+  export TS_WATCHDOG_LOG="$TMP/lock-fd-wd.log"
+  export TS_DAEMON_LOG="$TMP/lock-fd-daemon.log"
+  export TS_WATCHDOG_START_WAIT=0
+  export FAKE_TS_FD9_FILE="$TMP/lock-fd9"
+  export FAKE_TS_STARTED="$TMP/lock-fd-started"
+  export FAKE_TS_SLEEP=30
+  rm -f "$FAKE_TS_FD9_FILE" "$FAKE_TS_STARTED" "$FAKE_TAILSCALED_DOWN"
+  : > "$FAKE_TS_LOG"
+  # shellcheck source=../units/tailscale-watchdog.sh
+  source "$ROOT/units/tailscale-watchdog.sh"
+  STATE=$WD_STATE
+  STATEDIR=$WD_STATEDIR
+  SOCKET=$WD_SOCKET
+  BIN=$WD_BIN
+  mkdir -p "$TMP/lock-fd"
+  exec 9>"$TMP/lock-fd/pid"
+  flock -n 9
+  start_daemon
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    [[ -s "$FAKE_TS_FD9_FILE" ]] && break
+    sleep 0.05
+  done
+  exec 9>&-
+  if [[ "$(cat "$FAKE_TS_FD9_FILE" 2>/dev/null || true)" != "closed" ]]; then
+    echo "FAIL tailscaled inherited the watchdog lock fd"
+    cat "$FAKE_TS_FD9_FILE" 2>/dev/null || true
+    exit 1
+  fi
+  if ! flock -n "$TMP/lock-fd/pid" -c true; then
+    echo "FAIL tailscaled still holds the watchdog lock"
+    exit 1
+  fi
+  if [[ -s "$FAKE_TS_STARTED" ]]; then
+    kill "$(cat "$FAKE_TS_STARTED")" 2>/dev/null || true
+    wait "$(cat "$FAKE_TS_STARTED")" 2>/dev/null || true
+  fi
+)
+echo "ok tailscaled does not hold the watchdog lock fd"
+
+(
+  export SSHD_DEBUG_LOG="$TMP/sshd-debug.log"
+  export BOX_ACCESS_SS_TEXT=$'State\n'
+  export FD9_FILE="$TMP/sshd-fd9"
+  export SSHD_STARTED="$TMP/sshd-started"
+  rm -f "$FD9_FILE" "$SSHD_STARTED"
+  cat > "$TMP/bin/sshd-probe" <<'EOF'
+#!/usr/bin/env bash
+set -u
+if [[ "${1:-}" == "-t" ]]; then
+  exit 0
+fi
+if [[ -e /dev/fd/9 ]]; then
+  printf 'open\n' > "${FD9_FILE:?}"
+else
+  printf 'closed\n' > "${FD9_FILE:?}"
+fi
+printf '%s\n' "$$" > "${SSHD_STARTED:?}"
+sleep 30
+EOF
+  chmod 755 "$TMP/bin/sshd-probe"
+  # shellcheck source=../units/sshd-watchdog.sh
+  source "$ROOT/units/sshd-watchdog.sh"
+  LOG="$TMP/sshd-watchdog.log"
+  BIN="$TMP/bin/sshd-probe"
+  sshd_listening() { return 0; }
+  mkdir -p "$TMP/sshd-lock"
+  exec 9>"$TMP/sshd-lock/pid"
+  flock -n 9
+  start_sshd 100.64.0.8
+  exec 9>&-
+  if [[ "$(cat "$FD9_FILE" 2>/dev/null || true)" != "closed" ]]; then
+    echo "FAIL sshd inherited the watchdog lock fd"
+    cat "$FD9_FILE" 2>/dev/null || true
+    exit 1
+  fi
+  if ! flock -n "$TMP/sshd-lock/pid" -c true; then
+    echo "FAIL sshd still holds the watchdog lock"
+    exit 1
+  fi
+  if [[ -s "$SSHD_STARTED" ]]; then
+    kill "$(cat "$SSHD_STARTED")" 2>/dev/null || true
+    wait "$(cat "$SSHD_STARTED")" 2>/dev/null || true
+  fi
+)
+echo "ok sshd does not hold the watchdog lock fd"
+
+(
+  # shellcheck source=../units/tailscale-watchdog.sh
+  source "$ROOT/units/tailscale-watchdog.sh"
+  LOCK_DIR="$TMP/stale-clean"
+  mkdir -p "$LOCK_DIR"
+  printf 'leftover\n' > "$LOCK_DIR/pid.stale-585716"
+  watchdog_acquire_lock tailscale-watchdog.sh
+  if [[ -e "$LOCK_DIR/pid.stale-585716" ]]; then
+    echo "FAIL pid.stale-585716 was kept after the lock was taken"
+    exit 1
+  fi
+  if [[ "$(cat "$LOCK_DIR/pid")" != "$$" ]]; then
+    echo "FAIL lock pid file is not this watchdog"
+    cat "$LOCK_DIR/pid"
+    exit 1
+  fi
+)
+echo "ok pid.stale leftovers are removed once the lock is held"
+
+(
+  sleeper=0
+  trap '[[ "$sleeper" -ne 0 ]] && kill "$sleeper" 2>/dev/null || true' EXIT
+  # shellcheck source=../units/tailscale-watchdog.sh
+  source "$ROOT/units/tailscale-watchdog.sh"
+  LOCK_DIR="$TMP/stale-leak"
+  mkdir -p "$LOCK_DIR"
+  : > "$LOCK_DIR/pid"
+  bash -c 'exec 9>"$1"; flock -n 9 || exit 1; exec sleep 30' _ "$LOCK_DIR/pid" &
+  sleeper=$!
+  held=0
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    if [[ -e "/proc/$sleeper/fd/9" ]]; then
+      held=1
+      break
+    fi
+    sleep 0.05
+  done
+  if [[ "$held" -ne 1 ]]; then
+    echo "FAIL leaked holder did not take the lock"
+    exit 1
+  fi
+  err="$TMP/stale-leak.err"
+  watchdog_acquire_lock tailscale-watchdog.sh 2>"$err"
+  if ! grep -q "lock held by pid $sleeper" "$err"; then
+    echo "FAIL leaked lock was not moved aside"
+    cat "$err"
+    exit 1
+  fi
+  if compgen -G "$LOCK_DIR/pid.stale-*" >/dev/null; then
+    echo "FAIL pid.stale name survived a successful acquire"
+    ls -l "$LOCK_DIR"
+    exit 1
+  fi
+  if flock -n "$LOCK_DIR/pid" true; then
+    echo "FAIL new lock file is not held by this watchdog only"
+    exit 1
+  fi
+)
+echo "ok a lock held by sleep is moved aside"
+
+(
+  sleeper=0
+  trap '[[ "$sleeper" -ne 0 ]] && kill "$sleeper" 2>/dev/null || true' EXIT
+  # shellcheck source=../units/tailscale-watchdog.sh
+  source "$ROOT/units/tailscale-watchdog.sh"
+  LOCK_DIR="$TMP/stale-live"
+  mkdir -p "$LOCK_DIR"
+  : > "$LOCK_DIR/pid"
+  bash -c 'exec 9>"$1"; flock -n 9 || exit 1; exec -a tailscale-watchdog.sh sleep 30' _ "$LOCK_DIR/pid" &
+  sleeper=$!
+  held=0
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    if [[ -e "/proc/$sleeper/fd/9" ]]; then
+      held=1
+      break
+    fi
+    sleep 0.05
+  done
+  if [[ "$held" -ne 1 ]]; then
+    echo "FAIL live watchdog did not take the lock"
+    exit 1
+  fi
+  err="$TMP/stale-live.err"
+  set +e
+  watchdog_acquire_lock tailscale-watchdog.sh >"$TMP/stale-live.out" 2>"$err"
+  rc=$?
+  set -e
+  if [[ "$rc" -eq 0 ]]; then
+    echo "FAIL live watchdog lock was taken over"
+    exit 1
+  fi
+  if ! grep -q 'tailscale-watchdog already running' "$err"; then
+    echo "FAIL live watchdog was not left in place"
+    cat "$err"
+    exit 1
+  fi
+  if compgen -G "$LOCK_DIR/pid.stale-*" >/dev/null; then
+    echo "FAIL live watchdog lock was renamed"
+    ls -l "$LOCK_DIR"
+    exit 1
+  fi
+)
+echo "ok a live watchdog keeps the lock"

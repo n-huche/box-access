@@ -77,5 +77,87 @@ stop_port22_sshd() {
     [[ -n "$pid" ]] || continue
     sudo kill "$pid" 2>/dev/null || true
     printf '%s\n' "$pid"
-  done < <(port22_sshd_pids)
+  done < <(port22_sshd_pids 9>&-)
+}
+
+# Pids, other than this shell, that have $1 open. sudo so a root-held fd
+# (leaked from `sudo setsid`) is visible. Callers pass 9>&- so the scan
+# itself does not show up as a holder of the watchdog lock.
+watchdog_lock_holder_pids() {
+  local target=$1
+  sudo python3 -c '
+import os, sys
+target = os.path.realpath(sys.argv[1])
+skip = set()
+for arg in sys.argv[2:]:
+    if arg.isdigit():
+        skip.add(int(arg))
+st_target = os.stat(target)
+for name in os.listdir("/proc"):
+    if not name.isdigit():
+        continue
+    pid = int(name)
+    if pid in skip:
+        continue
+    fd_dir = "/proc/%d/fd" % pid
+    try:
+        fds = os.listdir(fd_dir)
+    except OSError:
+        continue
+    for fd in fds:
+        path = os.path.join(fd_dir, fd)
+        try:
+            st = os.stat(path)
+        except OSError:
+            continue
+        if st.st_dev == st_target.st_dev and st.st_ino == st_target.st_ino:
+            print(pid)
+            break
+' "$target" "$$" 9>&-
+}
+
+# True when pid's command line is the watchdog script (a live loop, not a leak).
+watchdog_pid_is_script() {
+  local pid=$1 script=$2 cmd
+  cmd=$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)
+  [[ "$cmd" == *"$script"* ]]
+}
+
+# Take the watchdog lock on fd 9 ($LOCK_DIR/pid). Returns 0 when this process
+# holds it. Returns 1 when another copy of $1 already holds it (caller exits 0).
+# A lock held by anything else (sudo, tailscaled, sshd, sleep) is a leak:
+# rename pid to pid.stale-<pid> and lock a new file. Leftover pid.stale-* names
+# are removed once we hold it. Children must still be started with 9>&- so
+# they do not keep the flock.
+watchdog_acquire_lock() {
+  local script=$1 attempt=0 holder="" pid live
+  mkdir -p -- "$LOCK_DIR"
+  while (( attempt < 2 )); do
+    attempt=$((attempt + 1))
+    exec 9>"$LOCK_DIR/pid"
+    if flock -n 9; then
+      printf '%s\n' "$$" >&9
+      rm -f -- "$LOCK_DIR"/pid.stale-*
+      return 0
+    fi
+    live=0
+    holder=""
+    while read -r pid; do
+      [[ -n "$pid" ]] || continue
+      if watchdog_pid_is_script "$pid" "$script"; then
+        live=1
+        break
+      fi
+      holder=$pid
+    done < <(watchdog_lock_holder_pids "$LOCK_DIR/pid" "$$" "${BASHPID:-$$}" 9>&-)
+    exec 9>&-
+    if [[ "$live" -eq 1 || -z "$holder" ]]; then
+      echo "${script%.sh} already running" >&2
+      return 1
+    fi
+    echo "${script%.sh}: lock held by pid $holder (not $script); moving it aside" >&2
+    mv -f -- "$LOCK_DIR/pid" "$LOCK_DIR/pid.stale-$holder" || true
+  done
+  echo "${script%.sh} already running" >&2
+  return 1
 }

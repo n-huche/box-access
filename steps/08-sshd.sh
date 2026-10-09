@@ -42,7 +42,7 @@ ensure_sshd() {
     -o "ListenAddress=$TS_IP" \
     -o "ClientAliveInterval=60" \
     -o "ClientAliveCountMax=30" \
-    >/dev/null 2>&1 &
+    >/dev/null 2>&1 9>&- &
   sleep 1
   if sshd_listening "$TS_IP"; then
     echo "ssh: listening on $TS_IP:$SSH_PORT"

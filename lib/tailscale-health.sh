@@ -75,7 +75,8 @@ sys.stdout.write("%s\t%s\n" % (backend, flag))
       return "$rc"
     fi
     secs=${TS_ONLINE_CONFIRM_SECS:-30}
-    sleep "$secs"
+    # The watchdog calls this while holding fd 9. sleep must not inherit it.
+    sleep "$secs" 9>&-
     _tailscale_health_sample && rc=0 || rc=$?
     if [[ "$rc" -eq 2 ]]; then
       TS_HEALTH_REASON="offline"
