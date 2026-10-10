@@ -5,7 +5,7 @@
 # bad samples (default 3) and at most once per TS_WATCHDOG_RESTART_COOLDOWN
 # seconds (default 600). The cooldown timestamp is tailscale-watchdog.cooldown.
 # A VM pause (wall clock ahead of /proc/uptime by more than TS_RESUME_SKEW_SECS,
-# default 20) restarts tailscaled immediately on the same state file, ignoring
+# default 5) restarts tailscaled immediately on the same state file, ignoring
 # the bad-read streak and the cooldown, at most once per
 # TS_RESUME_MIN_INTERVAL_SECS (default 60). Other health restarts stay on
 # TS_WATCHDOG_UNHEALTHY_READS (default 3) and TS_WATCHDOG_RESTART_COOLDOWN

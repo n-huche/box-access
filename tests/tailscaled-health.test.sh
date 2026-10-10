@@ -598,8 +598,8 @@ if (( wd_secs > 8 )); then
 fi
 echo "ok watchdog outside cooldown restarts once and records cooldown"
 
-if ! grep -q 'TS_RESUME_SKEW_SECS:-20' "$ROOT/lib/tailscale-health.sh"; then
-  echo "FAIL resume skew default is not 20s"
+if ! grep -q 'TS_RESUME_SKEW_SECS:-5' "$ROOT/lib/tailscale-health.sh"; then
+  echo "FAIL resume skew default is not 5s"
   exit 1
 fi
 if ! grep -q 'TS_RESUME_MIN_INTERVAL_SECS:-60' "$ROOT/units/tailscale-watchdog.sh"; then
@@ -683,6 +683,94 @@ resume_case() {
 start_count() {
   grep -c '^start ' "$FAKE_TS_LOG" || true
 }
+
+# Default skew is 5. Uptime stays put unless the case advances it too.
+default_skew_case() {
+  local mode=$1
+  local log="$TMP/resume-default-$mode.log"
+  (
+    unset TS_RESUME_SKEW_SECS
+    export TS_WATCHDOG_LOG="$log"
+    export TS_WATCHDOG_COOLDOWN_FILE="$TMP/resume-default-$mode.cooldown"
+    export TS_WALL_CLOCK_FILE="$TMP/resume-default-$mode.wall"
+    export TS_UPTIME_FILE="$TMP/resume-default-$mode.up"
+    export TS_WATCHDOG_UNHEALTHY_READS=3
+    export TS_WATCHDOG_START_WAIT=1
+    export TS_ONLINE_CONFIRM_SECS=0
+    export FAKE_TS_BACKEND=Running
+    export FAKE_TS_ONLINE=true
+    export FAKE_TS_ONLINE_LIST=
+    export FAKE_TS_IP=100.64.0.8
+    : > "$FAKE_TS_LOG"
+    : > "$TS_WATCHDOG_LOG"
+    rm -f "$FAKE_TAILSCALED_DOWN" "$TS_WATCHDOG_COOLDOWN_FILE"
+    # shellcheck source=../units/tailscale-watchdog.sh
+    source "$ROOT/units/tailscale-watchdog.sh"
+    STATE=$WD_STATE
+    STATEDIR=$WD_STATEDIR
+    SOCKET=$WD_SOCKET
+    BIN=$WD_BIN
+    printf '%s\n' 1000 > "$TS_WALL_CLOCK_FILE"
+    printf '%s\n' 100 > "$TS_UPTIME_FILE"
+    watchdog_tick
+    case "$mode" in
+      six)
+        printf '%s\n' 1006 > "$TS_WALL_CLOCK_FILE"
+        ;;
+      three)
+        printf '%s\n' 1003 > "$TS_WALL_CLOCK_FILE"
+        ;;
+      together)
+        # Slow tick: both clocks move 40s, so the skew is 0, not 40.
+        printf '%s\n' 1040 > "$TS_WALL_CLOCK_FILE"
+        printf '%s\n' 140 > "$TS_UPTIME_FILE"
+        ;;
+    esac
+    watchdog_tick
+  )
+}
+
+default_skew_case six
+if [[ "$(start_count)" -ne 1 ]]; then
+  echo "FAIL 6s jump did not restart once"
+  cat "$FAKE_TS_LOG"
+  cat "$TMP/resume-default-six.log"
+  exit 1
+fi
+if ! grep -q 'resume detected (paused 6s)' "$TMP/resume-default-six.log"; then
+  echo "FAIL 6s jump was not logged"
+  cat "$TMP/resume-default-six.log"
+  exit 1
+fi
+echo "ok 6s wall jump with uptime frozen restarts"
+
+default_skew_case three
+if [[ "$(start_count)" -ne 0 ]]; then
+  echo "FAIL 3s jump restarted tailscaled"
+  cat "$FAKE_TS_LOG"
+  cat "$TMP/resume-default-three.log"
+  exit 1
+fi
+if grep -q 'resume detected' "$TMP/resume-default-three.log"; then
+  echo "FAIL 3s jump was logged as a resume"
+  cat "$TMP/resume-default-three.log"
+  exit 1
+fi
+echo "ok 3s wall jump does not restart"
+
+default_skew_case together
+if [[ "$(start_count)" -ne 0 ]]; then
+  echo "FAIL slow tick with both clocks advancing restarted tailscaled"
+  cat "$FAKE_TS_LOG"
+  cat "$TMP/resume-default-together.log"
+  exit 1
+fi
+if grep -q 'resume detected' "$TMP/resume-default-together.log"; then
+  echo "FAIL slow tick was logged as a resume"
+  cat "$TMP/resume-default-together.log"
+  exit 1
+fi
+echo "ok wall and uptime advancing together is not a resume"
 
 resume_case above
 if [[ "$(start_count)" -ne 1 ]]; then

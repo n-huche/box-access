@@ -105,14 +105,21 @@ sys.stdout.write("%s\t%s\n" % (backend, flag))
     printf '%s\n' "${raw:-0}"
   }
 
-  # 0 when wall clock advanced more than uptime by more than TS_RESUME_SKEW_SECS
-  # (default 20) since the previous sample. The first sample only records a baseline.
-  # Sets TS_RESUME_PAUSED to that difference in seconds.
+  # 0 when the wall clock gained more than TS_RESUME_SKEW_SECS (default 5)
+  # beyond /proc/uptime since the previous sample. The first sample only
+  # records a baseline. Wall and uptime are read together, once per tick,
+  # before the health check and the sleep, and the previous pair is updated
+  # only here.
+  # paused = wall_delta - uptime_delta. A slow tick advances both clocks, so
+  # the skew stays near 0; this does not compare the wall delta to the 5s sleep.
+  # /proc/uptime is CLOCK_BOOTTIME and can advance during part of a VM freeze,
+  # so the measured skew is shorter than the wall-clock gap. 5s still catches
+  # that short reading. Sets TS_RESUME_PAUSED to the difference in whole seconds.
   tailscale_resume_from_pause() {
     local wall up paused skew
     wall=$(tailscale_wall_secs)
     up=$(tailscale_uptime_secs)
-    skew=${TS_RESUME_SKEW_SECS:-20}
+    skew=${TS_RESUME_SKEW_SECS:-5}
     if [[ -z "${TS_RESUME_PREV_WALL:-}" || -z "${TS_RESUME_PREV_UP:-}" ]]; then
       TS_RESUME_PREV_WALL=$wall
       TS_RESUME_PREV_UP=$up
