@@ -626,7 +626,6 @@ resume_case() {
     export FAKE_TS_BACKEND=Running
     export FAKE_TS_ONLINE=true
     export FAKE_TS_ONLINE_LIST=
-    unset FAKE_TS_DEBUG_RC
     : > "$FAKE_TS_LOG"
     : > "$TS_WATCHDOG_LOG"
     rm -f "$FAKE_TAILSCALED_DOWN" "$TS_WATCHDOG_COOLDOWN_FILE"
@@ -660,17 +659,6 @@ resume_case() {
         printf '%s\n' 1130 > "$TS_WALL_CLOCK_FILE"
         watchdog_tick
         ;;
-      debug-missing|debug-fail)
-        if [[ "$mode" == debug-missing ]]; then
-          export FAKE_TS_DEBUG_RC=127
-        else
-          export FAKE_TS_DEBUG_RC=1
-        fi
-        export FAKE_TS_IP=100.64.0.8
-        watchdog_tick
-        printf '%s\n' 1100 > "$TS_WALL_CLOCK_FILE"
-        watchdog_tick
-        ;;
       unhealthy|unhealthy-cooldown)
         export TS_WATCHDOG_UNHEALTHY_READS=3
         export FAKE_TS_IP=100.64.0.8
@@ -696,14 +684,9 @@ start_count() {
   grep -c '^start ' "$FAKE_TS_LOG" || true
 }
 
-debug_called() {
-  local sub=$1
-  grep -F -q "debug socket=$WD_SOCKET $sub" "$FAKE_TS_LOG"
-}
-
 resume_case above
-if [[ "$(start_count)" -ne 0 ]]; then
-  echo "FAIL resume restarted tailscaled"
+if [[ "$(start_count)" -ne 1 ]]; then
+  echo "FAIL resume above the skew did not restart once"
   cat "$FAKE_TS_LOG"
   cat "$TMP/resume-above.log"
   exit 1
@@ -713,29 +696,25 @@ if ! grep -q 'resume detected (paused 100s)' "$TMP/resume-above.log"; then
   cat "$TMP/resume-above.log"
   exit 1
 fi
-if ! debug_called rebind || ! debug_called break-derp-conns; then
-  echo "FAIL resume did not rebind and break DERP on the daemon socket"
-  cat "$FAKE_TS_LOG"
-  exit 1
-fi
-if grep -q 'break-tcp-conns' "$FAKE_TS_LOG" || grep -q 'break-tcp-conns' "$ROOT/units/tailscale-watchdog.sh"; then
-  echo "FAIL resume used break-tcp-conns"
-  exit 1
-fi
 if ! grep -q 'restart skipped (cooldown)' "$TMP/resume-above.log"; then
-  echo "FAIL unhealthy sample after resume ignored the cooldown"
+  echo "FAIL resume case was not inside the health cooldown"
   cat "$TMP/resume-above.log"
   exit 1
 fi
+if ! grep -F -q -- "-state=$WD_STATE -statedir=$WD_STATEDIR -socket=$WD_SOCKET" "$FAKE_TS_LOG"; then
+  echo "FAIL resume restart did not reuse STATE STATEDIR SOCKET"
+  cat "$FAKE_TS_LOG"
+  exit 1
+fi
 if grep -q -- '--authkey\|tailscale up' "$FAKE_TS_LOG"; then
-  echo "FAIL resume used an authkey or tailscale up"
+  echo "FAIL resume restart used an authkey or tailscale up"
   exit 1
 fi
 if [[ "$(cat "$STATE")" != "$IDENTITY" ]]; then
-  echo "FAIL resume replaced the state identity"
+  echo "FAIL resume restart replaced the state identity"
   exit 1
 fi
-echo "ok wall-clock jump refreshes the path and does not restart"
+echo "ok wall-clock jump above the skew restarts inside cooldown"
 
 resume_case below
 if [[ "$(start_count)" -ne 0 ]]; then
@@ -752,7 +731,7 @@ fi
 echo "ok wall-clock jump below the skew does not restart"
 
 resume_case twice
-if [[ "$(start_count)" -ne 0 ]]; then
+if [[ "$(start_count)" -ne 1 ]]; then
   echo "FAIL two close jumps restarted $(start_count) times"
   cat "$FAKE_TS_LOG"
   cat "$TMP/resume-twice.log"
@@ -763,46 +742,11 @@ if [[ "$(grep -c 'resume detected' "$TMP/resume-twice.log")" -ne 1 ]]; then
   cat "$TMP/resume-twice.log"
   exit 1
 fi
-if [[ "$(grep -c 'debug socket=.* break-derp-conns' "$FAKE_TS_LOG")" -ne 1 ]]; then
-  echo "FAIL two close jumps ran break-derp-conns more than once"
-  cat "$FAKE_TS_LOG"
-  exit 1
-fi
-echo "ok two resume jumps inside 60s produce one path refresh"
-
-for mode in debug-missing debug-fail; do
-  resume_case "$mode"
-  want=127
-  if [[ "$mode" == debug-fail ]]; then
-    want=1
-  fi
-  if [[ "$(start_count)" -ne 0 ]]; then
-    echo "FAIL $mode restarted tailscaled"
-    cat "$FAKE_TS_LOG"
-    cat "$TMP/resume-$mode.log"
-    exit 1
-  fi
-  if ! grep -q "resume: tailscale debug rebind failed (exit $want); not restarting" "$TMP/resume-$mode.log"; then
-    echo "FAIL $mode did not log the rebind failure"
-    cat "$TMP/resume-$mode.log"
-    exit 1
-  fi
-  if ! grep -q "resume: tailscale debug break-derp-conns failed (exit $want); not restarting" "$TMP/resume-$mode.log"; then
-    echo "FAIL $mode did not log the break-derp-conns failure"
-    cat "$TMP/resume-$mode.log"
-    exit 1
-  fi
-  if ! debug_called rebind || ! debug_called break-derp-conns; then
-    echo "FAIL $mode did not attempt both debug commands"
-    cat "$FAKE_TS_LOG"
-    exit 1
-  fi
-done
-echo "ok missing or failing debug command does not restart"
+echo "ok two resume jumps inside 60s produce one restart"
 
 resume_case unhealthy
 if [[ "$(start_count)" -ne 1 ]]; then
-  echo "FAIL three bad reads after resume restarted $(start_count) times"
+  echo "FAIL resume of an unhealthy node restarted $(start_count) times"
   cat "$FAKE_TS_LOG"
   cat "$TMP/resume-unhealthy.log"
   exit 1
@@ -812,41 +756,36 @@ if ! grep -q 'resume detected (paused 200s)' "$TMP/resume-unhealthy.log"; then
   cat "$TMP/resume-unhealthy.log"
   exit 1
 fi
-if ! grep -q 'no IPv4 (3/3)' "$TMP/resume-unhealthy.log"; then
-  echo "FAIL three bad reads after resume were not counted"
-  cat "$TMP/resume-unhealthy.log"
-  exit 1
-fi
-if ! grep -q 'no IPv4; restarting' "$TMP/resume-unhealthy.log"; then
-  echo "FAIL third bad read after resume did not restart"
+if grep -q 'no IPv4; restarting' "$TMP/resume-unhealthy.log"; then
+  echo "FAIL resume waited for the bad-read streak"
   cat "$TMP/resume-unhealthy.log"
   exit 1
 fi
 if ! grep -F -q -- "-state=$WD_STATE -statedir=$WD_STATEDIR -socket=$WD_SOCKET" "$FAKE_TS_LOG"; then
-  echo "FAIL health restart after resume did not reuse STATE STATEDIR SOCKET"
+  echo "FAIL resume restart did not reuse STATE STATEDIR SOCKET"
   cat "$FAKE_TS_LOG"
   exit 1
 fi
-echo "ok three bad reads after resume restart once"
+echo "ok resume restarts immediately and does not wait for 3 bad reads"
 
 resume_case unhealthy-cooldown
-if [[ "$(start_count)" -ne 0 ]]; then
-  echo "FAIL cooldown did not block the health restart after resume"
+if [[ "$(start_count)" -ne 1 ]]; then
+  echo "FAIL cooldown blocked the resume restart ($(start_count) starts)"
   cat "$FAKE_TS_LOG"
   cat "$TMP/resume-unhealthy-cooldown.log"
   exit 1
 fi
-if ! grep -q 'no IPv4 (3/3)' "$TMP/resume-unhealthy-cooldown.log"; then
-  echo "FAIL cooldown case did not reach 3 bad reads"
+if ! grep -q 'resume detected (paused 200s)' "$TMP/resume-unhealthy-cooldown.log"; then
+  echo "FAIL cooldown case did not log the resume"
   cat "$TMP/resume-unhealthy-cooldown.log"
   exit 1
 fi
-if ! grep -q 'restart skipped (cooldown)' "$TMP/resume-unhealthy-cooldown.log"; then
-  echo "FAIL cooldown case did not skip the restart"
+if grep -q 'restart skipped (cooldown)' "$TMP/resume-unhealthy-cooldown.log"; then
+  echo "FAIL resume restart was blocked by the health cooldown"
   cat "$TMP/resume-unhealthy-cooldown.log"
   exit 1
 fi
-echo "ok three bad reads after resume respect cooldown"
+echo "ok resume restarts inside the health cooldown"
 
 for unit in "$ROOT/units/tailscale-watchdog.sh" "$ROOT/units/sshd-watchdog.sh"; do
   if grep -E '^[[:space:]]*sleep ' "$unit" | grep -v '9>&-' >/dev/null; then
