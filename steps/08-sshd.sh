@@ -6,10 +6,10 @@
 # come from lib/listen.sh.
 
 # shellcheck source=../lib/listen.sh
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/listen.sh"
+source "$(realpath "$(dirname "${BASH_SOURCE[0]}")/..")/lib/listen.sh"
 
 ensure_sshd() {
-  local n=0
+  local n=0 foreign=""
   TS_IP=""
   while true; do
     TS_IP=$(tailscale_ip 2>/dev/null || true)
@@ -28,16 +28,24 @@ ensure_sshd() {
   done
 
   if sshd_listening "$TS_IP"; then
-    echo "ssh: already listening on $TS_IP:$SSH_PORT"
-    return 0
+    foreign=$(box_access_foreign_sshd_pids "$(sshd_debug_log)")
+    if [[ -n "$foreign" ]]; then
+      # Only the listening pid is signaled. Session children are other pids.
+      echo "ssh: replacing sshd from another checkout; active sessions stay up"
+      box_access_stop_foreign_sshd_listeners "$(sshd_debug_log)"
+    else
+      echo "ssh: already listening on $TS_IP:$SSH_PORT"
+      return 0
+    fi
   fi
   if [[ ! -x "$SSHD" ]]; then
     echo "ERROR: missing $SSHD" >&2
     return 1
   fi
   echo "ssh: starting sshd ListenAddress=$TS_IP:$SSH_PORT"
-  # -E and ClientAlive apply on this start. An already-running sshd is left
-  # alone (the watchdog adopts it and does not restart on a Tailscale resume).
+  # -E is units/sshd.log in this checkout. A listener whose -E already matches
+  # was returned above. ClientAlive applies on this start. A Tailscale resume
+  # does not come through here; the watchdog adopts the listener.
   sudo setsid "$SSHD" -D -E "$(sshd_debug_log)" -p "$SSH_PORT" \
     -o "ListenAddress=$TS_IP" \
     -o "ClientAliveInterval=60" \
@@ -70,8 +78,11 @@ assert_no_wildcard_sshd() {
 step_sshd() {
   if ! declare -F ensure_tailscaled >/dev/null 2>&1; then
     # shellcheck source=03-tailscaled.sh
-    source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/03-tailscaled.sh"
+    source "$(realpath "$(dirname "${BASH_SOURCE[0]}")")/03-tailscaled.sh"
   fi
+  local repo=${REPO:-$(realpath "$(dirname "${BASH_SOURCE[0]}")/..")}
+  # An sshd watchdog from another checkout would start the old listener again.
+  box_access_retire_other_watchdogs "$repo/units/sshd-watchdog.sh"
   ensure_tailscaled
   ensure_sshd
   close_port22
@@ -80,7 +91,7 @@ step_sshd() {
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-  source "$(cd "$(dirname "$0")/.." && pwd)/lib/common.sh"
+  source "$(realpath "$(dirname "$0")/..")/lib/common.sh"
   box_access_parse_args "$@"
   step_sshd
 fi

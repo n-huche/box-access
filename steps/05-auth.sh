@@ -38,7 +38,7 @@ tailscale_up_with_auth() {
 step_auth() {
   if ! declare -F ensure_tailscale_up_if_down >/dev/null 2>&1; then
     # shellcheck source=03-tailscaled.sh
-    source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/03-tailscaled.sh"
+    source "$(realpath "$(dirname "${BASH_SOURCE[0]}")")/03-tailscaled.sh"
   fi
   if [[ -z "${TS_RECOVERY_REASON+x}" ]]; then
     ensure_tailscaled
@@ -56,7 +56,7 @@ step_auth() {
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-  source "$(cd "$(dirname "$0")/.." && pwd)/lib/common.sh"
+  source "$(realpath "$(dirname "$0")/..")/lib/common.sh"
   box_access_parse_args "$@"
   step_auth
 fi

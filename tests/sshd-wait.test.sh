@@ -3,7 +3,7 @@
 # when the Tailscale IPv4 never arrives. Watchdogs can still start.
 set -euo pipefail
 
-ROOT=$(cd "$(dirname "$0")/.." && pwd)
+ROOT=$(realpath "$(dirname "$0")/..")
 export SSH_IPV4_WAIT_TRIES=2
 export SSH_IPV4_WAIT_INTERVAL=0
 # shellcheck source=../steps/08-sshd.sh

@@ -2,17 +2,20 @@
 # Keep sshd on <tailscale-ipv4>:2222 only. Never 0.0.0.0, *, or [::] on that port.
 # Keep port 22 closed: any sshd listening there is stopped (stop_port22_sshd).
 # Restart when that IPv4 changes. Do not restart sshd when tailscaled resumes.
-# -E units/sshd.log, ClientAliveInterval 60, ClientAliveCountMax 30 apply on
-# the next start only. Vendored into box-access.
+# -E is units/sshd.log next to this file (sshd_debug_log via realpath).
+# ClientAliveInterval 60 and ClientAliveCountMax 30 apply on the next start.
+# up.sh replaces a listener whose -E path is another checkout; this loop does
+# not restart sshd when tailscaled resumes. Vendored into box-access.
 
 set -u
 
 # Same SSH_PORT, tailscale_ip, and valid_listen_ip as ./up.sh. This file is
 # executed on its own, so it cannot source lib/common.sh (apt, secrets, purge).
 # shellcheck source=../lib/listen.sh
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/listen.sh"
+source "$(realpath "$(dirname "${BASH_SOURCE[0]}")/..")/lib/listen.sh"
 
-DIR=$(cd "$(dirname "$0")" && pwd)
+# BASH_SOURCE, not $0: sourcing this file must not follow the caller's path.
+DIR=$(realpath "$(dirname "${BASH_SOURCE[0]}")") || exit 1
 LOG="$DIR/sshd-watchdog.log"
 LOCK_DIR="$DIR/sshd-watchdog.lock"
 BIN=/usr/sbin/sshd

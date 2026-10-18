@@ -41,7 +41,7 @@ purge_stale_hostname() {
     return 1
   fi
 
-  lib_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+  lib_dir=$(realpath "$(dirname "${BASH_SOURCE[0]}")")
   echo "purge: listing tailnet devices for hostname=$hostname"
 
   tmp=$(mktemp)

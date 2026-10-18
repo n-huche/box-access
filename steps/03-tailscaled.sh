@@ -194,7 +194,7 @@ step_tailscaled() {
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-  source "$(cd "$(dirname "$0")/.." && pwd)/lib/common.sh"
+  source "$(realpath "$(dirname "$0")/..")/lib/common.sh"
   box_access_parse_args "$@"
   step_tailscaled
 fi

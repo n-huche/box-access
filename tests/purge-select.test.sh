@@ -2,7 +2,7 @@
 # Live-node safety for the Tailscale hostname purge. No network.
 set -euo pipefail
 
-ROOT=$(cd "$(dirname "$0")/.." && pwd)
+ROOT=$(realpath "$(dirname "$0")/..")
 PY="$ROOT/lib/purge_select.py"
 fail=0
 

@@ -14,7 +14,8 @@
 
 set -u
 
-DIR=$(cd "$(dirname "$0")" && pwd)
+# BASH_SOURCE, not $0: sourcing this file must not follow the caller's path.
+DIR=$(realpath "$(dirname "${BASH_SOURCE[0]}")") || exit 1
 LOG="${TS_WATCHDOG_LOG:-$DIR/tailscale-watchdog.log}"
 LOCK_DIR="$DIR/tailscale-watchdog.lock"
 BIN=/usr/sbin/tailscaled
@@ -25,7 +26,7 @@ MIN_BACKOFF=5
 MAX_BACKOFF=60
 
 # shellcheck source=../lib/tailscale-health.sh
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/tailscale-health.sh"
+source "$(realpath "$(dirname "${BASH_SOURCE[0]}")/..")/lib/tailscale-health.sh"
 
 log() {
   printf '%s %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*" >>"$LOG"

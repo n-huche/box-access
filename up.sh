@@ -7,7 +7,9 @@
 
 set -euo pipefail
 
-REPO=$(cd "$(dirname "$0")" && pwd)
+# Checkout root from this file. realpath collapses a symlink onto the real
+# directory, so the two invocations share one repo. No checkout path is hardcoded.
+REPO=$(realpath "$(dirname "$0")")
 # shellcheck source=lib/common.sh
 source "$REPO/lib/common.sh"
 box_access_parse_args "$@"
@@ -38,6 +40,11 @@ run_step "$REPO/steps/07-ssh-keys.sh" step_ssh_keys
 run_step "$REPO/steps/08-sshd.sh" step_sshd
 
 if [[ "$NO_WATCHDOGS" -eq 1 ]]; then
+  # Do not start loops. Still drop one that belongs to another checkout so it
+  # cannot restart sshd or tailscaled from the old path. This checkout's loop,
+  # if it is already up, is left running.
+  box_access_retire_other_watchdogs "$REPO/units/tailscale-watchdog.sh"
+  box_access_retire_other_watchdogs "$REPO/units/sshd-watchdog.sh"
   echo "watchdog: skipped (--no-watchdogs)"
 else
   run_step "$REPO/steps/09-watchdogs.sh" step_watchdogs

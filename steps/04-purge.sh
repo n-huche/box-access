@@ -7,7 +7,7 @@
 box_need_tailscaled_funcs() {
   if ! declare -F refresh_recovery_reason >/dev/null 2>&1; then
     # shellcheck source=03-tailscaled.sh
-    source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/03-tailscaled.sh"
+    source "$(realpath "$(dirname "${BASH_SOURCE[0]}")")/03-tailscaled.sh"
   fi
 }
 
@@ -30,7 +30,7 @@ step_purge() {
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-  source "$(cd "$(dirname "$0")/.." && pwd)/lib/common.sh"
+  source "$(realpath "$(dirname "$0")/..")/lib/common.sh"
   box_access_parse_args "$@"
   step_purge
 fi

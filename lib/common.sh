@@ -9,9 +9,10 @@ fi
 
 box_access_set_paths() {
   local lib_dir
-  lib_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+  # This file's directory, symlinks resolved. No checkout path is hardcoded.
+  lib_dir=$(realpath "$(dirname "${BASH_SOURCE[0]}")")
   BOX_LIB_DIR=$lib_dir
-  REPO=$(cd "$lib_dir/.." && pwd)
+  REPO=$(realpath "$lib_dir/..")
   HOME_BOX="${HOME_BOX:-/home/box}"
   STATE=/var/lib/tailscale/tailscaled.state
   STATEDIR=/var/lib/tailscale

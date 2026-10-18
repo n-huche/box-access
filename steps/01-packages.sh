@@ -4,7 +4,7 @@
 
 # Host-key helpers. Sourcing does not run step_ssh_keys.
 # shellcheck source=07-ssh-keys.sh
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/07-ssh-keys.sh"
+source "$(realpath "$(dirname "${BASH_SOURCE[0]}")")/07-ssh-keys.sh"
 
 os_release_var() {
   local key=$1
@@ -123,7 +123,7 @@ step_packages() {
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-  source "$(cd "$(dirname "$0")/.." && pwd)/lib/common.sh"
+  source "$(realpath "$(dirname "$0")/..")/lib/common.sh"
   box_access_parse_args "$@"
   step_packages
   if [[ "$INSTALL_ONLY" -eq 1 ]]; then
