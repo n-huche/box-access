@@ -2,7 +2,7 @@
 # Shell purge refuses an unidentified live node and does not DELETE it.
 set -euo pipefail
 
-ROOT=$(cd "$(dirname "$0")/.." && pwd)
+ROOT=$(realpath "$(dirname "$0")/..")
 # shellcheck source=../lib/purge-stale-hostname.sh
 source "$ROOT/lib/purge-stale-hostname.sh"
 

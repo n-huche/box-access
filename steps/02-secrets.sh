@@ -7,7 +7,7 @@
 step_secrets() {
   if ! declare -F report_ssh_host_keys >/dev/null 2>&1; then
     # shellcheck source=07-ssh-keys.sh
-    source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/07-ssh-keys.sh"
+    source "$(realpath "$(dirname "${BASH_SOURCE[0]}")")/07-ssh-keys.sh"
   fi
   load_secrets
   export TS_HOSTNAME="${TS_HOSTNAME:-cursor}"
@@ -19,7 +19,7 @@ step_secrets() {
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-  source "$(cd "$(dirname "$0")/.." && pwd)/lib/common.sh"
+  source "$(realpath "$(dirname "$0")/..")/lib/common.sh"
   box_access_parse_args "$@"
   step_secrets
 fi

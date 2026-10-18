@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT=$(cd "$(dirname "$0")/.." && pwd)
+ROOT=$(realpath "$(dirname "$0")/..")
 readme=$ROOT/README.md
 entry=$ROOT/up.sh
 wrapper=$ROOT/bootstrap.sh

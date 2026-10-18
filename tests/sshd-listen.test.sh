@@ -2,7 +2,7 @@
 # sshd watchdog binds the Tailscale IPv4 only and can see foreign listeners.
 set -euo pipefail
 
-ROOT=$(cd "$(dirname "$0")/.." && pwd)
+ROOT=$(realpath "$(dirname "$0")/..")
 # shellcheck source=../units/sshd-watchdog.sh
 source "$ROOT/units/sshd-watchdog.sh"
 

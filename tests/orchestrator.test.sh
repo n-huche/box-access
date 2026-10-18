@@ -3,7 +3,7 @@
 # Does not start tailscaled, sshd, or apt.
 set -euo pipefail
 
-ROOT=$(cd "$(dirname "$0")/.." && pwd)
+ROOT=$(realpath "$(dirname "$0")/..")
 # shellcheck source=../lib/common.sh
 source "$ROOT/lib/common.sh"
 

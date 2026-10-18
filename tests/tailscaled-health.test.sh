@@ -4,7 +4,7 @@
 # repeat before it counts. The bounce does not use an authkey.
 set -euo pipefail
 
-ROOT=$(cd "$(dirname "$0")/.." && pwd)
+ROOT=$(realpath "$(dirname "$0")/..")
 # shellcheck source=../lib/common.sh
 source "$ROOT/lib/common.sh"
 # shellcheck source=../steps/03-tailscaled.sh

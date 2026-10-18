@@ -2,7 +2,7 @@
 # Chrome apt sources are renamed so apt-get update cannot hang on dl.google.com.
 set -euo pipefail
 
-ROOT=$(cd "$(dirname "$0")/.." && pwd)
+ROOT=$(realpath "$(dirname "$0")/..")
 # shellcheck source=../lib/apt-update.sh
 source "$ROOT/lib/apt-update.sh"
 

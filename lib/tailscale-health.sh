@@ -9,7 +9,7 @@
 
 if [[ -z "${BOX_ACCESS_HEALTH_LOADED:-}" ]]; then
   BOX_ACCESS_HEALTH_LOADED=1
-  _ts_health_lib=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+  _ts_health_lib=$(realpath "$(dirname "${BASH_SOURCE[0]}")")
   # shellcheck source=listen.sh
   source "$_ts_health_lib/listen.sh"
   unset _ts_health_lib
@@ -147,7 +147,7 @@ sys.stdout.write("%s\t%s\n" % (backend, flag))
       return
     fi
     local root
-    root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+    root=$(realpath "$(dirname "${BASH_SOURCE[0]}")/..")
     printf '%s\n' "$root/units/tailscaled.log"
   }
 

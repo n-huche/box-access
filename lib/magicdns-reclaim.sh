@@ -22,7 +22,7 @@ read_tailscale_status_fields() {
   TS_SELF_IPV4=""
   TS_PURGE_REQUIRE_SELF=0
 
-  lib_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+  lib_dir=$(realpath "$(dirname "${BASH_SOURCE[0]}")")
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
     key=${line%% *}
@@ -96,7 +96,7 @@ wait_for_dns_label() {
   local want=$1
   local tries=${2:-20}
   local i label lib_dir
-  lib_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+  lib_dir=$(realpath "$(dirname "${BASH_SOURCE[0]}")")
   for ((i = 0; i < tries; i++)); do
     read_tailscale_status_fields
     label=$(python3 "$lib_dir/magicdns.py" label "$TS_STATUS_DNS")
@@ -133,7 +133,7 @@ bounce_hostname_for_magicdns() {
 
 reclaim_magicdns_if_needed() {
   local lib_dir
-  lib_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+  lib_dir=$(realpath "$(dirname "${BASH_SOURCE[0]}")")
   read_tailscale_status_fields
   if ! python3 "$lib_dir/magicdns.py" stuck "$TS_STATUS_HOST" "$TS_STATUS_DNS" "${TS_HOSTNAME:-cursor}"; then
     echo "magicdns: no reclaim (HostName=${TS_STATUS_HOST:-unknown} DNSName=${TS_STATUS_DNS:-unknown})"

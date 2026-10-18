@@ -2,7 +2,7 @@
 # Sticky MagicDNS detection and the tmp → desired hostname bounce.
 set -euo pipefail
 
-ROOT=$(cd "$(dirname "$0")/.." && pwd)
+ROOT=$(realpath "$(dirname "$0")/..")
 PY="$ROOT/lib/magicdns.py"
 
 expect_stuck() {
