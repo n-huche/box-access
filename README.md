@@ -44,7 +44,7 @@ Watchdogs run from this repo. `up.sh` does not call another clone.
 ## Use
 
 ```bash
-cd /workspace/box-access
+cd /workspace/box-infra/box-access
 git pull
 ./up.sh
 ```
