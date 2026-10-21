@@ -12,8 +12,8 @@ expected=$(printf '%s\n' \
   steps/01-packages.sh \
   steps/02-secrets.sh \
   steps/03-tailscaled.sh \
-  steps/04-purge.sh \
-  steps/05-auth.sh \
+  steps/04-auth.sh \
+  steps/05-purge.sh \
   steps/06-magicdns.sh \
   steps/07-ssh-keys.sh \
   steps/08-sshd.sh \
@@ -62,8 +62,8 @@ echo "ok flag parser"
 source "$ROOT/steps/01-packages.sh"
 # shellcheck source=../steps/03-tailscaled.sh
 source "$ROOT/steps/03-tailscaled.sh"
-# shellcheck source=../steps/04-purge.sh
-source "$ROOT/steps/04-purge.sh"
+# shellcheck source=../steps/05-purge.sh
+source "$ROOT/steps/05-purge.sh"
 for func in step_packages step_purge step_ssh_keys refresh_recovery_reason; do
   if ! declare -F "$func" >/dev/null; then
     echo "FAIL missing function $func"

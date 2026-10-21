@@ -12,11 +12,52 @@ if [[ -z "${BOX_ACCESS_LISTEN_LOADED:-}" ]]; then
   # 40 * 3s is about 2 minutes.
   SSH_IPV4_WAIT_INTERVAL="${SSH_IPV4_WAIT_INTERVAL:-3}"
   SSH_IPV4_WAIT_TRIES="${SSH_IPV4_WAIT_TRIES:-40}"
+  # sshd refuses to start without its privilege separation directory, and a
+  # fresh image does not create it ("Missing privilege separation directory").
+  SSHD_PRIVSEP_DIR="${SSHD_PRIVSEP_DIR:-/run/sshd}"
 fi
+
+# The socket tailscaled is started with (-socket=). SOCKET from lib/common.sh
+# or the watchdog wins; this default is the same path.
+tailscale_socket() {
+  printf '%s\n' "${SOCKET:-/run/tailscale/tailscaled.sock}"
+}
+
+# Every tailscale CLI call goes through here, with the socket explicit.
+# The CLI default is /var/run/tailscale/tailscaled.sock; an image that ships
+# /var/run as a real directory instead of a symlink to /run leaves the CLI
+# dialing a socket that does not exist.
+ts_cli() {
+  sudo tailscale --socket="$(tailscale_socket)" "$@"
+}
+
+# True when CLI output says the daemon could not be reached, as opposed to
+# a rejected key or another backend answer.
+tailscale_daemon_unreachable_text() {
+  grep -qiE 'failed to connect to local tailscale|dial unix|tailscaled\.sock|connection refused|is tailscaled running' <<<"${1:-}"
+}
+
+# 0 when the socket exists and the daemon answers `status`.
+tailscale_daemon_reachable() {
+  local sock out
+  sock=$(tailscale_socket)
+  sudo test -S "$sock" || return 1
+  out=$(ts_cli status --json 2>&1 9>&-) && return 0
+  ! tailscale_daemon_unreachable_text "$out"
+}
+
+# Create SSHD_PRIVSEP_DIR (root, 0755; sudo makes root the owner) when it is
+# missing. No-op when it exists.
+ensure_sshd_privsep_dir() {
+  if sudo test -d "$SSHD_PRIVSEP_DIR"; then
+    return 0
+  fi
+  sudo install -d -m 0755 "$SSHD_PRIVSEP_DIR" 9>&-
+}
 
 tailscale_ip() {
   local ip
-  ip=$(sudo tailscale ip -4 2>/dev/null | head -n1 | tr -d '[:space:]' || true)
+  ip=$(ts_cli ip -4 2>/dev/null | head -n1 | tr -d '[:space:]' || true)
   if [[ -n "$ip" ]]; then
     printf '%s\n' "$ip"
     return 0

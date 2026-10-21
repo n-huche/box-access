@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Start tailscaled. Reuse /var/lib/tailscale when the state file exists.
-# A missing state file is recovery (05-auth.sh), not a new identity from this step.
+# A missing state file is recovery (04-auth.sh), not a new identity from this step.
 # A process that is up but unhealthy (not Running, no IPv4, or Self.Online
 # still false after a second read) is restarted on the same state. That bounce
 # does not auth and does not mint a node; purge and tailscale up still run afterwards.
 
 tailscale_backend_state() {
-  sudo tailscale status --json 2>/dev/null | python3 -c '
+  ts_cli status --json 2>/dev/null | python3 -c '
 import json, sys
 try:
     data = json.load(sys.stdin)
@@ -19,7 +19,7 @@ print(data.get("BackendState") or "")
 
 tailscale_status_logged_out() {
   local text
-  text=$(sudo tailscale status 2>&1 || true)
+  text=$(ts_cli status 2>&1 || true)
   grep -qiE 'NeedsLogin|Logged out|not logged in' <<<"$text"
 }
 
@@ -166,7 +166,7 @@ ensure_tailscale_up_if_down() {
   fi
   export TS_HOSTNAME="${TS_HOSTNAME:-cursor}"
   echo "tailscale: session present but no IPv4 (BackendState=${backend:-unknown}); bringing up hostname=$TS_HOSTNAME"
-  sudo tailscale up --hostname="$TS_HOSTNAME"
+  ts_cli up --hostname="$TS_HOSTNAME"
 }
 
 # Sets TS_RECOVERY_REASON to a non-empty reason, or empty when the session is fine.

@@ -33,8 +33,9 @@ fi
 
 run_step "$REPO/steps/02-secrets.sh" step_secrets
 run_step "$REPO/steps/03-tailscaled.sh" step_tailscaled
-run_step "$REPO/steps/04-purge.sh" step_purge
-run_step "$REPO/steps/05-auth.sh" step_auth
+# Auth before purge: the old device is deleted only once this node is up.
+run_step "$REPO/steps/04-auth.sh" step_auth
+run_step "$REPO/steps/05-purge.sh" step_purge
 run_step "$REPO/steps/06-magicdns.sh" step_magicdns
 run_step "$REPO/steps/07-ssh-keys.sh" step_ssh_keys
 run_step "$REPO/steps/08-sshd.sh" step_sshd

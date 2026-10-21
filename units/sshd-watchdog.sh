@@ -117,10 +117,19 @@ start_sshd() {
     return 1
   fi
   stop_sshd_except "$ip"
+  # A fresh image has no /run/sshd, and sshd -t and sshd both refuse to run.
+  if ! sudo test -d "$SSHD_PRIVSEP_DIR" 9>&-; then
+    if ensure_sshd_privsep_dir; then
+      log "created $SSHD_PRIVSEP_DIR (0755)"
+    else
+      log "ERROR: could not create $SSHD_PRIVSEP_DIR"
+    fi
+  fi
+  local test_err
   if ! sudo "$BIN" -t -p "$SSH_PORT" -o "ListenAddress=$ip" \
-    -o "ClientAliveInterval=60" -o "ClientAliveCountMax=30" >/dev/null 2>&1; then
-    if ! sudo "$BIN" -t >/dev/null 2>&1; then
-      log "WARN: sshd -t failed; trying to start anyway"
+    -o "ClientAliveInterval=60" -o "ClientAliveCountMax=30" >/dev/null 2>&1 9>&-; then
+    if ! test_err=$(sudo "$BIN" -t 2>&1 >/dev/null 9>&-); then
+      log "WARN: sshd -t failed (${test_err%%$'\n'*}); trying to start anyway"
     fi
   fi
   # 9>&- so sudo/setsid/sshd do not inherit the watchdog lock.

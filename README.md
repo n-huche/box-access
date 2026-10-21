@@ -18,7 +18,7 @@ Port **2222** is never bound to `0.0.0.0`, `*`, or `[::]`. Port **22** is closed
 up.sh                           # run the steps below; honors flags
 bootstrap.sh                    # exec ./up.sh "$@"; same arguments
 lib/common.sh                   # paths, logging, secrets (never prints values)
-lib/listen.sh                   # SSH_PORT, tailscale_ip, valid_listen_ip
+lib/listen.sh                   # SSH_PORT, ts_cli (--socket), tailscale_ip, /run/sshd
 lib/tailscale-health.sh         # Running + IPv4 + Self.Online
 lib/purge-stale-hostname.sh     # API purge; skips the live node
 lib/purge_select.py             # match stale devices by hostname, keep our IPv4
@@ -28,8 +28,8 @@ lib/apt-update.sh               # disable the hanging Chrome apt source
 steps/01-packages.sh            # Tailscale apt, openssh, chrome apt workaround
 steps/02-secrets.sh             # load secrets.env; default hostname cursor
 steps/03-tailscaled.sh          # start tailscaled; reuse state if it exists
-steps/04-purge.sh               # on recovery, delete other TS_HOSTNAME devices
-steps/05-auth.sh                # authkey, or tailscale up when only down
+steps/04-auth.sh                # authkey, or tailscale up when only down
+steps/05-purge.sh               # after auth: delete other TS_HOSTNAME devices
 steps/06-magicdns.sh            # tmp → hostname when DNS is stuck on -1
 steps/07-ssh-keys.sh            # authorized_keys, fingerprints, ssh-keygen -R
 steps/08-sshd.sh                # ListenAddress=$TS_IP:2222 only
@@ -85,12 +85,18 @@ There is no systemd. After an Update or reboot the watchdogs are dead: from the 
 1. **`01-packages.sh`** — Disable Google Chrome apt sources that hang `apt-get update` (see below). Add the official Tailscale apt repo for the current Debian/Ubuntu suite, then install `openssh-server` and `tailscale`. Install `curl` or `python3` only if they are missing. Ensure SSH host keys exist (`ssh-keygen -A`). `--install-only` prints fingerprints here and exits.
 2. **`02-secrets.sh`** — Load `/home/box/.config/box-access/secrets.env` (`TS_API_KEY`, `TS_AUTHKEY`, `TS_HOSTNAME`, default hostname `cursor`). Does not prompt. If host keys were regenerated, print fingerprints and the client `ssh-keygen -R` lines before recovery.
 3. **`03-tailscaled.sh`** — Start `tailscaled`. An existing `/var/lib/tailscale/tailscaled.state` is reused. A missing state file means recovery, not a silent new node. If the process is already up but unhealthy (not Running, no IPv4, or `Self.Online` still false on a second read), restart it on that same state file without an authkey.
-4. **`04-purge.sh`** — Only on recovery: prompt for missing keys if there is a TTY, then **purge** devices whose hostname equals `TS_HOSTNAME`, except this machine's live node (matched by Tailscale IPv4). A logged-in session skips this step.
-5. **`05-auth.sh`** — On recovery, `tailscale up --authkey --hostname`. If the auth key fails on a TTY, start interactive `tailscale up` and print the browser URL. A logged-in session that is only down (`Stopped`) is `tailscale up` without a new auth key.
+4. **`04-auth.sh`** — On recovery, `tailscale up --authkey --hostname`. If `tailscaled` cannot be reached on its socket, it says so and exits with status 3; that is not an auth key problem. If the auth key itself fails on a TTY, start interactive `tailscale up` and print the browser URL; without a TTY it exits with status 1. A logged-in session that is only down (`Stopped`) is `tailscale up` without a new auth key.
+5. **`05-purge.sh`** — Only on recovery, and only after this node is `Running` with a Tailscale IPv4: prompt for missing keys if there is a TTY, then **purge** devices whose hostname equals `TS_HOSTNAME`, except this machine's live node (matched by Tailscale IPv4). If the node never comes up, the purge is skipped and the old devices stay. A logged-in session skips this step. A node that came up as `cursor-1` gets its name back in step 06.
 6. **`06-magicdns.sh`** — Reclaim when the hostname is right but the DNS name is still `cursor-1` (see below).
 7. **`07-ssh-keys.sh`** — Ensure `/home/box/.ssh/authorized_keys`. Print host-key fingerprints again (and `ssh-keygen -R` when keys changed this run).
 8. **`08-sshd.sh`** — `sshd` listens only on `<tailscale-ipv4>:2222` (`ListenAddress=$TS_IP`). It waits about 2 minutes for that IPv4, the same budget as the sshd watchdog. If the address is still missing, it warns and continues so the watchdogs start; they keep waiting and bind sshd. A listener whose `-E` log is already this checkout is kept. A listener started from another checkout is replaced without signaling an open SSH session. A wildcard check applies to port 2222. Any `sshd` listening on port 22 is stopped.
 9. **`09-watchdogs.sh`** — Start the tailscaled and sshd watchdogs from `units/`, unless this checkout's copy is already running. A copy from another checkout is replaced first. Skipped with `--no-watchdogs`: a new loop is not started, and a loop from another checkout is still stopped.
+
+## Sockets and runtime directories
+
+Every `tailscale` CLI call goes through `ts_cli` in `lib/listen.sh`, which passes `--socket=/run/tailscale/tailscaled.sock`, the same path `tailscaled` is started with. The CLI default is under `/var/run`; on 2026-10-21 a new image shipped `/var/run` as a real directory instead of a symlink to `/run`, and the CLI could not reach the daemon.
+
+`sshd` needs `/run/sshd` (its privilege separation directory), and a new image does not create it. `08-sshd.sh` and `units/sshd-watchdog.sh` create it (`install -d -m 0755`, owned by root) before starting `sshd`. The watchdog log keeps the first line of a failing `sshd -t`.
 
 ## Debian apt: Tailscale is not in the distro
 
