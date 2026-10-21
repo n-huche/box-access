@@ -16,7 +16,7 @@ if [[ -z "${BOX_ACCESS_HEALTH_LOADED:-}" ]]; then
 
   tailscale_read_status() {
     local line
-    line=$(sudo tailscale status --json 2>/dev/null | python3 -c '
+    line=$(ts_cli status --json 2>/dev/null | python3 -c '
 import json, sys
 try:
     data = json.load(sys.stdin)

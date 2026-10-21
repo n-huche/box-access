@@ -42,6 +42,9 @@ ensure_sshd() {
     echo "ERROR: missing $SSHD" >&2
     return 1
   fi
+  if ! ensure_sshd_privsep_dir; then
+    echo "WARN: could not create $SSHD_PRIVSEP_DIR; sshd will refuse to start." >&2
+  fi
   echo "ssh: starting sshd ListenAddress=$TS_IP:$SSH_PORT"
   # -E is units/sshd.log in this checkout. A listener whose -E already matches
   # was returned above. ClientAlive applies on this start. A Tailscale resume

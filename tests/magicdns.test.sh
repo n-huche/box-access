@@ -46,6 +46,11 @@ mkdir -p "$TMP/bin"
 cat > "$TMP/bin/tailscale" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "${1:-}" != --socket=* ]]; then
+  echo "tailscale called without --socket: $*" >&2
+  exit 1
+fi
+shift
 cmd=${1:-}
 shift || true
 printf '%s %s\n' "$cmd" "$*" >> "${FAKE_TS_LOG:?}"

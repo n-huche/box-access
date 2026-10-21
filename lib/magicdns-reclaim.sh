@@ -6,9 +6,9 @@
 
 tailscale_as_root() {
   if [[ -n "${BOX_ACCESS_NOSUDO:-}" ]]; then
-    tailscale "$@"
+    tailscale --socket="$(tailscale_socket)" "$@"
   else
-    sudo tailscale "$@"
+    ts_cli "$@"
   fi
 }
 
