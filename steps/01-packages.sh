@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tailscale apt repo, openssh-server, chrome apt hang workaround.
+# Tailscale apt repo, openssh-server, chrome and SRV apt workarounds.
 # --install-only stops after this step (plus host-key fingerprints).
 
 # Host-key helpers. Sourcing does not run step_ssh_keys.
@@ -101,8 +101,9 @@ ensure_python3() {
 }
 
 step_packages() {
-  # Chrome's apt source can block the first update. Disable it before any apt call.
+  # Chrome's apt source and Debian SRV records can block or break the first update.
   disable_hanging_chrome_apt_sources
+  disable_apt_srv_records
 
   snapshot_ssh_host_keys
   ensure_tailscale_apt_repo

@@ -65,3 +65,41 @@ if grep -q 'disabling ' <<<"$out"; then
 fi
 [[ -f "$DIR/ubuntu.sources" ]]
 echo "ok second run leaves disabled sources disabled"
+
+# --- apt SRV record disablement (Acquire::EnableSrvRecords "false";) ---
+CONF_DIR="$TMP/apt.conf.d"
+out1=$(disable_apt_srv_records "$CONF_DIR")
+[[ -f "$CONF_DIR/99-no-srv-records" ]]
+[[ "$(cat "$CONF_DIR/99-no-srv-records")" == 'Acquire::EnableSrvRecords "false";' ]]
+if ! grep -q '99-no-srv-records' <<<"$out1"; then
+  echo "FAIL first pass did not report writing 99-no-srv-records"
+  exit 1
+fi
+out2=$(disable_apt_srv_records "$CONF_DIR")
+if [[ -n "$out2" ]]; then
+  echo "FAIL second pass was not a silent no-op: $out2"
+  exit 1
+fi
+echo "ok 99-no-srv-records written and idempotent"
+
+FAKE_BIN="$TMP/bin"
+APT_LOG="$TMP/apt.log"
+mkdir -p "$FAKE_BIN"
+cat > "$FAKE_BIN/sudo" <<'EOF'
+#!/usr/bin/env bash
+exec "$@"
+EOF
+cat > "$FAKE_BIN/apt-get" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${APT_LOG:?}"
+exit 0
+EOF
+chmod +x "$FAKE_BIN/sudo" "$FAKE_BIN/apt-get"
+rm -rf "$CONF_DIR"
+PATH="$FAKE_BIN:$PATH" APT_CONF_D="$CONF_DIR" APT_LOG="$APT_LOG" apt_get_update >/dev/null
+[[ -f "$CONF_DIR/99-no-srv-records" ]]
+if ! grep -q -- '-o Acquire::EnableSrvRecords=false' "$APT_LOG"; then
+  echo "FAIL apt_get_update did not pass -o Acquire::EnableSrvRecords=false: $(cat "$APT_LOG")"
+  exit 1
+fi
+echo "ok apt_get_update writes 99-no-srv-records and passes Acquire::EnableSrvRecords=false"

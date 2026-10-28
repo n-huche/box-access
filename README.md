@@ -24,8 +24,8 @@ lib/purge-stale-hostname.sh     # API purge; skips the live node
 lib/purge_select.py             # match stale devices by hostname, keep our IPv4
 lib/magicdns-reclaim.sh         # bounce tmp → desired name when DNS is stuck
 lib/magicdns.py
-lib/apt-update.sh               # disable the hanging Chrome apt source
-steps/01-packages.sh            # Tailscale apt, openssh, chrome apt workaround
+lib/apt-update.sh               # disable the hanging Chrome apt source and apt SRV records
+steps/01-packages.sh            # Tailscale apt, openssh, chrome and SRV apt workarounds
 steps/02-secrets.sh             # load secrets.env; default hostname cursor
 steps/03-tailscaled.sh          # start tailscaled; reuse state if it exists
 steps/04-auth.sh                # authkey, or tailscale up when only down
@@ -82,7 +82,7 @@ There is no systemd. After an Update or reboot the watchdogs are dead: from the 
 
 `--install-only` runs step 01 and stops. `--no-watchdogs` skips step 09. Otherwise:
 
-1. **`01-packages.sh`** — Disable Google Chrome apt sources that hang `apt-get update` (see below). Add the official Tailscale apt repo for the current Debian/Ubuntu suite, then install `openssh-server` and `tailscale`. Install `curl` or `python3` only if they are missing. Ensure SSH host keys exist (`ssh-keygen -A`). `--install-only` prints fingerprints here and exits.
+1. **`01-packages.sh`** — Disable Google Chrome apt sources that hang `apt-get update` and disable apt DNS SRV lookups (`99-no-srv-records`; see below). Add the official Tailscale apt repo for the current Debian/Ubuntu suite, then install `openssh-server` and `tailscale`. Install `curl` or `python3` only if they are missing. Ensure SSH host keys exist (`ssh-keygen -A`). `--install-only` prints fingerprints here and exits.
 2. **`02-secrets.sh`** — Load `/home/box/.config/box-access/secrets.env` (`TS_API_KEY`, `TS_AUTHKEY`, `TS_HOSTNAME`, default hostname `cursor`). Does not prompt. If host keys were regenerated, print fingerprints and the client `ssh-keygen -R` lines before recovery.
 3. **`03-tailscaled.sh`** — Start `tailscaled`. An existing `/var/lib/tailscale/tailscaled.state` is reused. A missing state file means recovery, not a silent new node. If the process is already up but unhealthy (not Running, no IPv4, or `Self.Online` still false on a second read), restart it on that same state file without an authkey.
 4. **`04-auth.sh`** — On recovery, `tailscale up --authkey --hostname`. If `tailscaled` cannot be reached on its socket, it says so and exits with status 3; that is not an auth key problem. If the auth key itself fails on a TTY, start interactive `tailscale up` and print the browser URL; without a TTY it exits with status 1. A logged-in session that is only down (`Stopped`) is `tailscale up` without a new auth key.
@@ -126,6 +126,18 @@ The Chrome `.sources` file says it is not recreated if removed. To use the Chrom
 sudo mv /etc/apt/sources.list.d/google-chrome.sources.disabled-by-box-access \
         /etc/apt/sources.list.d/google-chrome.sources
 ```
+
+## Debian apt SRV records (`198.18.0.1`)
+
+By default, apt queries `_http._tcp.deb.debian.org` and `_https._tcp.deb.debian.org` DNS `SRV` records before `A`/`AAAA`. When those `SRV` records resolve to `198.18.0.1` on the box egress proxy, `apt-get update` and `apt-get install` fail (`500 Internal Server Error` or TLS `unexpected eof while reading`), even though standard `A`/`AAAA` resolution for `deb.debian.org` works over HTTP and HTTPS.
+
+On every run, `steps/01-packages.sh` and `apt_get_update` write `/etc/apt/apt.conf.d/99-no-srv-records` (`APT_CONF_D`):
+
+```text
+Acquire::EnableSrvRecords "false";
+```
+
+`apt_get_update` also passes `-o Acquire::EnableSrvRecords=false`. Because `/etc/apt/apt.conf.d/99-no-srv-records` stays in place for the rest of the boot, any later `apt-get update` or `apt-get install` on the host skips `SRV` lookups as well.
 
 ## Secrets (not in git)
 
